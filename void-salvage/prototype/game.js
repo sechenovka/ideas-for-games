@@ -49,7 +49,8 @@ const rand = (a, b) => a + Math.random() * (b - a);
 
 // ---------- state ----------
 let mode = 'editor'; // 'editor' | 'flight'
-let grid, selected = 'hull';
+let design, selected = 'hull';   // design = freeform part list [{dx,dy,t}] in ship-local px
+let mouse = { x: 0, y: 0 };
 let allies = [], foes, station, bullets, particles, stars, planet;
 const selection = new Set(); // ally ships under command
 let rosterSel = new Set();   // chosen escort indices
@@ -103,6 +104,7 @@ addEventListener('mousedown', e => {
   if (e.button === 0) flightClick(e.clientX, e.clientY, e.shiftKey);
 });
 addEventListener('mousemove', e => {
+  mouse.x = e.clientX; mouse.y = e.clientY;
   if (!dragging || (mode !== 'flight' && mode !== 'planet')) return;
   cam.x -= (e.clientX - dragLast.x) / cam.zoom;
   cam.y -= (e.clientY - dragLast.y) / cam.zoom;
@@ -127,31 +129,41 @@ function selectAll() {
 }
 const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
-// ---------- editor ----------
-function starterGrid() {
-  const g = Array.from({ length: GRID }, () => Array(GRID).fill(null));
+// ---------- editor: freeform pixel assembly ----------
+// design is a loose list of parts {dx,dy,t} in ship-local px. Parts must
+// touch an existing part — snap flush to its edge, or nudge to a free offset.
+function starterDesign() {
+  return [{ dx: -2 * CS, dy: 0, t: 'engine' }, { dx: -CS, dy: 0, t: 'hull' }, { dx: 0, dy: 0, t: 'hull' }, { dx: CS, dy: 0, t: 'turret' }];
+}
+
+// convert a [row,col,type] layout to freeform coords (roster + foe defs stay grid-written)
+function defDesign(list) {
   const c = (GRID - 1) / 2;
-  g[c][c - 2] = 'engine'; g[c][c - 1] = 'hull'; g[c][c] = 'hull'; g[c][c + 1] = 'turret';
-  return g;
+  return list.map(([r, col, t]) => ({ dx: (col - c) * CS, dy: (r - c) * CS, t }));
 }
 
-function gridCost() {
-  let s = 0;
-  for (const row of grid) for (const t of row) if (t) s += TYPES[t].cost;
-  return s;
-}
+const designCost = () => design.reduce((s, p) => s + TYPES[p.t].cost, 0);
 
-function hasNeighbor(r, c) {
-  for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    const nr = r + dr, nc = c + dc;
-    if (nr >= 0 && nr < GRID && nc >= 0 && nc < GRID && grid[nr][nc]) return true;
+// ship preview area — the "workbench" surface
+const view = () => ({ x: W * 0.32, y: H * 0.52, k: 1.7 });
+
+// where the part would land: flush-snap to a neighbor edge, else free offset
+function snapPos(px, py) {
+  let best = null, bd = CS * 0.8;
+  for (const p of design) {
+    for (const [ox, oy] of [[CS, 0], [-CS, 0], [0, CS], [0, -CS], [CS, CS], [CS, -CS], [-CS, CS], [-CS, -CS]]) {
+      const cx = p.dx + ox, cy = p.dy + oy, d = Math.hypot(px - cx, py - cy);
+      if (d < bd) { bd = d; best = { dx: cx, dy: cy }; }
+    }
   }
-  return false;
-}
-
-function gridScreen() {
-  const s = Math.min(46, Math.floor(Math.min(W, H) * 0.72 / GRID));
-  return { x: W * 0.34 - s * GRID / 2, y: H / 2 - s * GRID / 2, s };
+  if (best) return best;
+  // free placement — allowed only if it actually touches another part
+  for (const p of design) {
+    const d = Math.hypot(px - p.dx, py - p.dy);
+    if (d > CS * 0.55 && d < CS * 1.45)
+      return { dx: Math.round(px / 2) * 2, dy: Math.round(py / 2) * 2 };
+  }
+  return null;
 }
 
 function editorClick(mx, my) {
@@ -168,21 +180,24 @@ function editorClick(mx, my) {
     }
   }
   if (inRect(launchBtn, mx, my)) { if (canLaunch().ok) launch(); return; }
-  const gs = gridScreen();
-  const c = Math.floor((mx - gs.x) / gs.s), r = Math.floor((my - gs.y) / gs.s);
-  if (c < 0 || c >= GRID || r < 0 || r >= GRID) return;
-  if (grid[r][c]) {
-    if (grid.flat().filter(Boolean).length > 1) grid[r][c] = null;
-    return;
+  const v = view();
+  const px = (mx - v.x) / v.k, py = (my - v.y) / v.k;
+  // click a part -> rip it off
+  for (const p of design) {
+    if (Math.hypot(px - p.dx, py - p.dy) < CS * 0.55) {
+      if (design.length > 1) design.splice(design.indexOf(p), 1);
+      return;
+    }
   }
-  if (!hasNeighbor(r, c) && grid.flat().some(Boolean)) return;
-  if (gridCost() + TYPES[selected].cost > budget()) return;
-  grid[r][c] = selected;
+  const sp = snapPos(px, py);
+  if (!sp) return;
+  if (designCost() + TYPES[selected].cost > budget()) return;
+  design.push({ dx: sp.dx, dy: sp.dy, t: selected });
 }
 
 function canLaunch() {
-  const flat = grid.flat().filter(Boolean);
-  const n = t => flat.filter(x => x === t).length;
+  const n = t => design.filter(x => x.t === t).length;
+  if (!design.length) return { ok: false, why: 'empty hull' };
   if (!n('hull')) return { ok: false, why: 'need HULL' };
   if (!n('engine')) return { ok: false, why: 'need ENGINE' };
   if (!n('turret')) return { ok: false, why: 'need GUN' };
@@ -190,27 +205,18 @@ function canLaunch() {
 }
 
 // ---------- ship building ----------
-function blocksFromGrid(g) {
-  const blocks = [], c = (GRID - 1) / 2;
-  for (let r = 0; r < GRID; r++) for (let col = 0; col < GRID; col++) {
-    const t = g[r][col];
-    if (t) blocks.push({
-      dx: (col - c) * CS, dy: (r - c) * CS, type: t,
-      hp: TYPES[t].hp, maxHp: TYPES[t].hp, cd: rand(0, 0.5),
-      variant: t === 'hull' ? HULL_VARIANTS[Math.floor(Math.random() * HULL_VARIANTS.length)] : t,
-      aim: 0,
-      pix: new Uint8Array(BP * BP).fill(1), pixCount: BP * BP,
-      barrels: t === 'turret' ? 1 : 0
-    });
-  }
-  return blocks;
+function blocksFromList(list) {
+  return list.map(({ dx, dy, t }) => ({
+    dx, dy, type: t,
+    hp: TYPES[t].hp, maxHp: TYPES[t].hp, cd: rand(0, 0.5),
+    variant: t === 'hull' ? HULL_VARIANTS[Math.floor(Math.random() * HULL_VARIANTS.length)] : t,
+    aim: 0,
+    pix: new Uint8Array(BP * BP).fill(1), pixCount: BP * BP,
+    barrels: t === 'turret' ? 1 : 0
+  }));
 }
 
-function gridFromList(list) {
-  const g = Array.from({ length: GRID }, () => Array(GRID).fill(null));
-  for (const [r, c, t] of list) g[r][c] = t;
-  return g;
-}
+const gridFromList = defDesign; // foe/roster layouts are still written as [r,c,t]
 
 function recount(s) {
   const eng = s.blocks.filter(b => b.type === 'engine').length;
@@ -219,10 +225,10 @@ function recount(s) {
   s.turn = Math.max(1.0, 2.4 - mass * 0.08);
 }
 
-function makeShip(g, x, y, team, color, o = {}) {
+function makeShip(list, x, y, team, color, o = {}) {
   const s = {
     x, y, vx: 0, vy: 0, angle: o.angle ?? 0, va: 0,
-    blocks: blocksFromGrid(g), team, color,
+    blocks: blocksFromList(list), team, color,
     thrust: 0, turn: 0, radius: 0, alive: true,
     order: null, thrusting: false, orb: Math.random() < 0.5 ? 1 : -1
   };
@@ -241,7 +247,7 @@ function launch() {
   mode = 'flight';
   autopilot = false; paused = false; won = false; dead = false; time = 0;
   debris = []; msg = null; reinforced = false;
-  const flag = makeShip(grid, -600, 0, 'ally', '#7fd4ff');
+  const flag = makeShip(design, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
   cam.x = flag.x; cam.y = flag.y; cam.zoom = 1;
   let i = 0;
@@ -282,7 +288,7 @@ function launch() {
 
 function makeAsteroid(x, y, r) {
   const spr = r > 48 ? 'asteroid_c' : (Math.random() < 0.5 ? 'asteroid_a' : 'asteroid_b');
-  return { x, y, r, spr, vx: rand(-8, 8), vy: rand(-8, 8), rot: rand(0, TAU), va: rand(-0.2, 0.2), hp: Math.round(r * 1.6), roamer: false };
+  return { x, y, r, spr, vx: rand(-8, 8), vy: rand(-8, 8), rot: rand(0, TAU), va: rand(-0.2, 0.2), hp: Math.round(r * 1.6), roamer: false, dmg: [] };
 }
 
 // fast mover crossing the field — dodge it or eat pixel damage
@@ -527,6 +533,9 @@ function checkBlockDead(s, blk) {
   const bpos = bw(s, blk);
   s.blocks = s.blocks.filter(x => x !== blk);
   explode(bpos.x, bpos.y, s.color, 14);
+  // the block's remains tear off as chunks — yours included
+  const dcol = DEBRIS_COL[blk.variant || blk.type] || '#888';
+  for (let k = 0; k < 3; k++) spawnChunk(bpos.x + rand(-8, 8), bpos.y + rand(-8, 8), dcol, 2 + Math.floor(rand(0, 3)));
   recount(s);
   if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); }
 }
@@ -542,8 +551,13 @@ function update(dt) {
     s.x += s.vx * dt; s.y += s.vy * dt;
     if (s.thrusting)
       for (const b of s.blocks) if (b.type === 'engine') {
-        const p = bw(s, b);
-        particles.push({ x: p.x - Math.cos(s.angle) * CS * 0.7, y: p.y - Math.sin(s.angle) * CS * 0.7, vx: -Math.cos(s.angle) * 60 + rand(-15, 15), vy: -Math.sin(s.angle) * 60 + rand(-15, 15), ttl: 0.3, max: 0.3, color: '#ff9d5c', r: 3 });
+        // twin nozzles = twin flames, one at each exhaust port
+        for (const off of [-CS * 0.34, CS * 0.34]) {
+          const p = bw(s, b);
+          const ex = p.x - Math.cos(s.angle) * CS * 0.7 - Math.sin(s.angle) * off;
+          const ey = p.y - Math.sin(s.angle) * CS * 0.7 + Math.cos(s.angle) * off;
+          particles.push({ x: ex, y: ey, vx: -Math.cos(s.angle) * 60 + rand(-15, 15), vy: -Math.sin(s.angle) * 60 + rand(-15, 15), ttl: 0.3, max: 0.3, color: '#ff9d5c', r: 3 });
+        }
       }
     autoFire(s, dt, s.order && s.order.kind === 'attack' ? s.order.t : null);
   }
@@ -632,6 +646,10 @@ function update(dt) {
       if (Math.hypot(b.x - a.x, b.y - a.y) < a.r) {
         a.hp -= b.dmg; b.ttl = 0; hitRock = true;
         explode(b.x, b.y, '#8a8f9a', 4);
+        // visible crater on the rock + a stone chip flies off
+        const ia = Math.atan2(b.y - a.y, b.x - a.x) - a.rot;
+        a.dmg.push({ x: Math.cos(ia) * rand(0.2, 0.7) * a.r, y: Math.sin(ia) * rand(0.2, 0.7) * a.r, r: rand(3, 7) });
+        if (Math.random() < 0.5) spawnChunk(b.x, b.y, '#5a6170', 1);
         if (a.hp <= 0) {
           a.dead = true; explode(a.x, a.y, '#8a8f9a', 30);
           for (let k = 0; k < 4; k++) spawnChunk(a.x + rand(-14, 14), a.y + rand(-14, 14), '#5a6170', 2 + Math.floor(rand(0, 3)));
@@ -691,19 +709,27 @@ function update(dt) {
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
   particles = particles.filter(p => p.ttl > 0);
 
-  // salvage pickups
+  // debris is not loot — it is SHRAPNEL. It stays forever and eats hull
   for (const d of debris) {
     d.x += d.vx * dt; d.y += d.vy * dt; d.a += d.va * dt;
-    d.vx *= (1 - 0.4 * dt); d.vy *= (1 - 0.4 * dt);
-    for (const s of allies) {
-      if (s.alive && dist(s, d) < s.radius + 30) {
-        salvage += d.v; d.got = true;
-        explode(d.x, d.y, '#ffcf6e', 6);
-        break;
+    d.vx *= (1 - 0.15 * dt); d.vy *= (1 - 0.15 * dt); // slows but never stops fully
+    for (const s of [...allies, ...foes]) {
+      if (!s.alive) continue;
+      const relV = Math.hypot(s.vx - d.vx, s.vy - d.vy);
+      if (dist(s, d) < s.radius * 0.8 && relV > 55) {
+        let blk = null, bd = 1e9;
+        for (const bl of s.blocks) { const p = bw(s, bl), dd = Math.hypot(d.x - p.x, d.y - p.y); if (dd < bd) { bd = dd; blk = bl; } }
+        if (blk) {
+          erodeBlock(s, blk, d.x, d.y, 1 + Math.floor(Math.min(3, relV / 120)));
+          // chunk ricochets off with a knock
+          const kn = Math.atan2(d.y - s.y, d.x - s.x);
+          d.vx = Math.cos(kn) * relV * 0.8; d.vy = Math.sin(kn) * relV * 0.8;
+          explode(d.x, d.y, d.color, 5);
+        }
       }
     }
   }
-  debris = debris.filter(d => !d.got);
+  if (debris.length > 420) debris.splice(0, debris.length - 420); // perf cap
 
   // dead in the water: a ship with no engines left bleeds off speed and stalls
   for (const s of [...allies, ...foes]) {
@@ -721,25 +747,41 @@ function update(dt) {
 // ---------- draw: editor ----------
 function drawEditor() {
   ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
-  const gs = gridScreen();
+  const v = view();
+  const gs = { x: v.x - 260, y: 60 }; // anchor for labels/stats
 
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 20px monospace';
   ctx.fillText('SHIPYARD — assemble your bucket', gs.x, gs.y - 46);
   ctx.fillStyle = '#5a6a8a'; ctx.font = '13px monospace';
-  ctx.fillText('click palette, click grid to place  •  click a block to remove  •  blocks must touch', gs.x, gs.y - 24);
+  ctx.fillText('click palette, click near a part to weld it on  •  click a part to rip it off', gs.x, gs.y - 24);
 
-  for (let r = 0; r < GRID; r++) for (let c = 0; c < GRID; c++) {
-    const x = gs.x + c * gs.s, y = gs.y + r * gs.s;
-    const t = grid[r][c];
-    ctx.fillStyle = '#0b1220';
-    ctx.fillRect(x + 1, y + 1, gs.s - 2, gs.s - 2);
-    if (t) {
-      const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
-      if (sprReady(spr)) ctx.drawImage(spr, x + 1, y + 1, gs.s - 2, gs.s - 2);
-      else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(x + 1, y + 1, gs.s - 2, gs.s - 2); }
-      if (t === 'turret' && sprReady(SPRITES.gun_barrel)) ctx.drawImage(SPRITES.gun_barrel, x + 1, y + 1, gs.s - 2, gs.s - 2);
-    }
-    if (!t) { ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(x + 1, y + 1, gs.s - 2, gs.s - 2); }
+  // workbench surface
+  ctx.fillStyle = '#0b1220';
+  ctx.fillRect(v.x - 320, v.y - 260, 640, 520);
+  ctx.strokeStyle = '#1a2438'; ctx.strokeRect(v.x - 320, v.y - 260, 640, 520);
+  ctx.strokeStyle = 'rgba(60,80,120,0.15)';
+  for (let gx = -280; gx <= 280; gx += 44) { ctx.beginPath(); ctx.moveTo(v.x + gx, v.y - 260); ctx.lineTo(v.x + gx, v.y + 260); ctx.stroke(); }
+  for (let gy = -240; gy <= 240; gy += 44) { ctx.beginPath(); ctx.moveTo(v.x - 320, v.y + gy); ctx.lineTo(v.x + 320, v.y + gy); ctx.stroke(); }
+
+  const ds = CS * v.k;
+  const drawPart = (dx, dy, t, ghost) => {
+    const x = v.x + dx * v.k, y = v.y + dy * v.k;
+    ctx.globalAlpha = ghost ? 0.45 : 1;
+    const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
+    if (sprReady(spr)) ctx.drawImage(spr, x - ds / 2, y - ds / 2, ds, ds);
+    else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(x - ds / 2, y - ds / 2, ds, ds); }
+    if (t === 'turret' && sprReady(SPRITES.gun_barrel)) ctx.drawImage(SPRITES.gun_barrel, x - ds / 2, y - ds / 2, ds, ds);
+    ctx.globalAlpha = 1;
+  };
+  for (const p of design) drawPart(p.dx, p.dy, p.t, false);
+
+  // ghost preview — shows exactly where the part will weld
+  {
+    const px = (mouse.x - v.x) / v.k, py = (mouse.y - v.y) / v.k;
+    let onPart = false;
+    for (const p of design) if (Math.hypot(px - p.dx, py - p.dy) < CS * 0.55) onPart = true;
+    const sp = !onPart && snapPos(px, py);
+    if (sp && designCost() + TYPES[selected].cost <= budget()) drawPart(sp.dx, sp.dy, selected, true);
   }
 
   // palette
@@ -789,12 +831,11 @@ function drawEditor() {
   });
 
   // stats
-  const flat = grid.flat().filter(Boolean);
-  const n = t => flat.filter(x => x === t).length;
-  const mass = flat.length, eng = n('engine');
-  const sy = gs.y + GRID * gs.s + 30;
+  const n = t => design.filter(x => x.t === t).length;
+  const mass = design.length, eng = n('engine');
+  const sy = v.y + 290;
   ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
-  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${gridCost()}/${Math.floor(budget())}${salvage ? '  (+' + salvage.toFixed(1) + ' salvaged)' : ''}`, gs.x, sy);
+  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${designCost()}/${Math.floor(budget())}${salvage ? '  (+' + salvage.toFixed(1) + ' salvaged)' : ''}`, v.x - 320, sy);
 
   const chk = canLaunch();
   launchBtn.x = px; launchBtn.y = sy - 34;
@@ -895,6 +936,9 @@ function draw() {
     const d = a.r * 2.6;
     if (sprReady(spr)) ctx.drawImage(spr, -d / 2, -d / 2, d, d);
     else { ctx.fillStyle = '#3a3f4a'; ctx.beginPath(); ctx.arc(0, 0, a.r, 0, TAU); ctx.fill(); }
+    // impact craters — the rock keeps its scars
+    ctx.fillStyle = 'rgba(10,12,18,0.8)';
+    for (const cr of a.dmg) { ctx.beginPath(); ctx.arc(cr.x, cr.y, cr.r, 0, TAU); ctx.fill(); }
     ctx.restore();
   }
 
@@ -1445,6 +1489,6 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
-grid = starterGrid();
+design = starterDesign();
 requestAnimationFrame(loop);
 })();
