@@ -469,15 +469,19 @@ function explode(x, y, color, n = 24) {
   }
 }
 
-// colored debris chunks — "детальки". Random shapes: single pixels, sticks, corners
-function spawnChunk(x, y, color, n) {
+// colored debris chunks — "детальки". Random shapes: single pixels, sticks,
+// corners. dirA = ejection direction (outward cone so chunks can't tear off
+// INTO their own ship); src = ship it came from, brief no-hit grace
+function spawnChunk(x, y, color, n, dirA = null, src = null) {
   const shape = [[0, 0]];
   while (shape.length < n) {
     const [lx, ly] = shape[shape.length - 1];
     const [ox, oy] = [[1, 0], [-1, 0], [0, 1], [0, -1]][Math.floor(Math.random() * 4)];
     shape.push([lx + ox, ly + oy]);
   }
-  debris.push({ x, y, vx: rand(-110, 110), vy: rand(-110, 110), a: rand(0, TAU), va: rand(-5, 5), v: n * 0.15, shape, color });
+  const a = dirA === null ? rand(0, TAU) : dirA + rand(-1.1, 1.1);
+  const sp = rand(70, 170);
+  debris.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, a: rand(0, TAU), va: rand(-5, 5), shape, color, src, age: 0 });
 }
 
 function hitShip(s, b) {
@@ -494,7 +498,8 @@ function hitShip(s, b) {
   // smart turret damage: chance to shoot the barrel/tower clean off
   if (s.blocks.includes(blk) && blk.type === 'turret' && blk.barrels > 0 && Math.random() < 0.16) {
     blk.barrels--;
-    spawnChunk(bpos.x, bpos.y, '#2a3a4a', 4); // the barrel itself flies off
+    const outA = Math.atan2(bpos.y - s.y, bpos.x - s.x);
+    spawnChunk(bpos.x, bpos.y, '#2a3a4a', 4, outA, s); // the barrel itself flies off — outward
     explode(bpos.x, bpos.y, '#7fd4ff', 10);
     if (blk.barrels === 0) blk.pixCount = 1; // turret head gone — block dies
     checkBlockDead(s, blk);
@@ -510,6 +515,7 @@ function erodeBlock(s, blk, wx0, wy0, want, rr = 1.6) {
   const px = (lx / CS + 0.5) * BP, py = (ly / CS + 0.5) * BP;
   let removed = 0, tries = 0;
   const dcol = DEBRIS_COL[blk.variant || blk.type] || '#888';
+  const outA = Math.atan2(bpos.y - s.y, bpos.x - s.x); // chunks eject OUTWARD, away from ship center
   explode(wx0, wy0, dcol, 4); // impact sparks in the block's own color
   while (removed < want && tries < 50) {
     tries++;
@@ -521,7 +527,7 @@ function erodeBlock(s, blk, wx0, wy0, want, rr = 1.6) {
     const wx = bpos.x + ((ax / BP - 0.5) * CS) * c - ((ay / BP - 0.5) * CS) * sn;
     const wy = bpos.y + ((ax / BP - 0.5) * CS) * sn + ((ay / BP - 0.5) * CS) * c;
     if (removed <= 2 || Math.random() < 0.5)
-      spawnChunk(wx, wy, dcol, Math.random() < 0.65 ? 1 : (Math.random() < 0.7 ? 2 : 3));
+      spawnChunk(wx, wy, dcol, Math.random() < 0.65 ? 1 : (Math.random() < 0.7 ? 2 : 3), outA + rand(-0.3, 0.3), s);
     else
       particles.push({ x: wx, y: wy, vx: rand(-60, 60), vy: rand(-60, 60), ttl: 0.4, max: 0.4, color: dcol, r: 2.5 });
   }
@@ -533,9 +539,10 @@ function checkBlockDead(s, blk) {
   const bpos = bw(s, blk);
   s.blocks = s.blocks.filter(x => x !== blk);
   explode(bpos.x, bpos.y, s.color, 14);
-  // the block's remains tear off as chunks — yours included
+  // the block's remains tear off as chunks — yours included, always outward
   const dcol = DEBRIS_COL[blk.variant || blk.type] || '#888';
-  for (let k = 0; k < 3; k++) spawnChunk(bpos.x + rand(-8, 8), bpos.y + rand(-8, 8), dcol, 2 + Math.floor(rand(0, 3)));
+  const outA = Math.atan2(bpos.y - s.y, bpos.x - s.x);
+  for (let k = 0; k < 3; k++) spawnChunk(bpos.x + rand(-8, 8), bpos.y + rand(-8, 8), dcol, 2 + Math.floor(rand(0, 3)), outA + rand(-0.4, 0.4), s);
   recount(s);
   if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); }
 }
@@ -709,21 +716,23 @@ function update(dt) {
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
   particles = particles.filter(p => p.ttl > 0);
 
-  // debris is not loot — it is SHRAPNEL. It stays forever and eats hull
+  // debris is not loot — it is SHRAPNEL. It stays forever and eats hull,
+  // but bites small: only a real speed difference makes it dangerous
   for (const d of debris) {
-    d.x += d.vx * dt; d.y += d.vy * dt; d.a += d.va * dt;
-    d.vx *= (1 - 0.15 * dt); d.vy *= (1 - 0.15 * dt); // slows but never stops fully
+    d.x += d.vx * dt; d.y += d.vy * dt; d.a += d.va * dt; d.age += dt;
+    d.vx *= (1 - 0.15 * dt); d.vy *= (1 - 0.15 * dt);
     for (const s of [...allies, ...foes]) {
       if (!s.alive) continue;
+      if (d.src === s && d.age < 0.8) continue; // just-birthed chunk ignores its parent
       const relV = Math.hypot(s.vx - d.vx, s.vy - d.vy);
-      if (dist(s, d) < s.radius * 0.8 && relV > 55) {
+      if (dist(s, d) < s.radius * 0.8 && relV > 80) {
         let blk = null, bd = 1e9;
         for (const bl of s.blocks) { const p = bw(s, bl), dd = Math.hypot(d.x - p.x, d.y - p.y); if (dd < bd) { bd = dd; blk = bl; } }
         if (blk) {
-          erodeBlock(s, blk, d.x, d.y, 1 + Math.floor(Math.min(3, relV / 120)));
-          // chunk ricochets off with a knock
+          erodeBlock(s, blk, d.x, d.y, relV > 260 ? 2 : 1); // small bite — fast rams bite harder
           const kn = Math.atan2(d.y - s.y, d.x - s.x);
           d.vx = Math.cos(kn) * relV * 0.8; d.vy = Math.sin(kn) * relV * 0.8;
+          d.src = s; d.age = 0; // ricochet can't instantly re-hit the same hull
           explode(d.x, d.y, d.color, 5);
         }
       }
