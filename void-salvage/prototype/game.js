@@ -22,7 +22,7 @@ const TYPES = {
   turret: { cost: 3, hp: 28, color: '#2a4a5e', edge: '#7fd4ff', name: 'GUN' },
 };
 const KEYS_ORDER = ['hull', 'engine', 'turret'];
-const BP = 7; // per-block pixel grid — blocks die pixel by pixel
+const BP = 6; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = { hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30', turret: '#3d4f63' };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -33,7 +33,7 @@ const ROSTER = [
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -279,9 +279,7 @@ function launch() {
 }
 
 function makeAsteroid(x, y, r) {
-  const n = 9, verts = [];
-  for (let i = 0; i < n; i++) verts.push({ a: i / n * TAU, d: r * rand(0.65, 1.15) });
-  return { x, y, r, verts, vx: rand(-8, 8), vy: rand(-8, 8), rot: rand(0, TAU), va: rand(-0.2, 0.2), hp: Math.round(r * 1.6) };
+  return { x, y, r, spr: Math.random() < 0.5 ? 'asteroid_a' : 'asteroid_b', vx: rand(-8, 8), vy: rand(-8, 8), rot: rand(0, TAU), va: rand(-0.2, 0.2), hp: Math.round(r * 1.6) };
 }
 
 function turretPos(t) {
@@ -472,10 +470,11 @@ function hitShip(s, b) {
   const ly = -(b.x - bpos.x) * sn + (b.y - bpos.y) * c;
   const px = (lx / CS + 0.5) * BP, py = (ly / CS + 0.5) * BP;
   const splash = b.splash || 0;
-  const want = 3 + Math.floor(rand(0, 4)) + splash * 6;
-  const rr = 1.4 + splash;
+  const want = 5 + Math.floor(rand(0, 5)) + splash * 7;
+  const rr = 1.6 + splash;
   let removed = 0, tries = 0;
   const dcol = DEBRIS_COL[blk.variant || blk.type] || '#888';
+  explode(b.x, b.y, dcol, 4); // impact sparks in the block's own color
   while (removed < want && tries < 50) {
     tries++;
     const ax = Math.floor(px + rand(-rr, rr)), ay = Math.floor(py + rand(-rr, rr));
@@ -496,10 +495,10 @@ function hitShip(s, b) {
     blk.barrels--;
     spawnChunk(bpos.x, bpos.y, '#2a3a4a', 4); // the barrel itself flies off
     explode(bpos.x, bpos.y, '#7fd4ff', 10);
-    if (blk.barrels === 0) blk.pixCount = 0; // turret head gone — block dies
+    if (blk.barrels === 0) blk.pixCount = 1; // turret head gone — block dies
   }
 
-  if (blk.pixCount <= 0) {
+  if (blk.pixCount <= Math.floor(BP * BP * 0.2)) { // ~20% left = structurally dead
     s.blocks = s.blocks.filter(x => x !== blk);
     explode(bpos.x, bpos.y, s.color, 14);
     recount(s);
@@ -592,7 +591,7 @@ function update(dt) {
         explode(b.x, b.y, '#8a8f9a', 4);
         if (a.hp <= 0) {
           a.dead = true; explode(a.x, a.y, '#8a8f9a', 30);
-          debris.push({ x: a.x, y: a.y, vx: rand(-30, 30), vy: rand(-30, 30), a: rand(0, TAU), va: 2, v: 3, t: 'hull' });
+          for (let k = 0; k < 4; k++) spawnChunk(a.x + rand(-14, 14), a.y + rand(-14, 14), '#5a6170', 2 + Math.floor(rand(0, 3)));
         }
         break;
       }
@@ -855,18 +854,13 @@ function draw() {
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(planet.x, planet.y, planet.r, 0, TAU); ctx.fill();
 
-  // asteroids
+  // asteroids (Blender-rendered rocks)
   for (const a of asteroids) {
     ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(a.rot);
-    ctx.fillStyle = '#3a3f4a'; ctx.strokeStyle = '#5a6170'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let i = 0; i < a.verts.length; i++) {
-      const v = a.verts[i];
-      i ? ctx.lineTo(Math.cos(v.a) * v.d, Math.sin(v.a) * v.d) : ctx.moveTo(Math.cos(v.a) * v.d, Math.sin(v.a) * v.d);
-    }
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#4a5060';
-    ctx.beginPath(); ctx.arc(-a.r * 0.25, -a.r * 0.2, a.r * 0.22, 0, TAU); ctx.fill();
+    const spr = SPRITES[a.spr || 'asteroid_a'];
+    const d = a.r * 2.6;
+    if (sprReady(spr)) ctx.drawImage(spr, -d / 2, -d / 2, d, d);
+    else { ctx.fillStyle = '#3a3f4a'; ctx.beginPath(); ctx.arc(0, 0, a.r, 0, TAU); ctx.fill(); }
     ctx.restore();
   }
 
