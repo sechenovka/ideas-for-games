@@ -56,6 +56,13 @@ let salvage = 0, debris = [], msg = null, reinforced = false;
 const budget = () => BUDGET + salvage;
 let cam = { x: 0, y: 0, zoom: 1 };   // free camera: wheel zoom, RMB/MMB drag pan, F re-center
 let dragging = false, dragLast = null;
+let asteroids = [];
+// ---------- planet mode ----------
+const TIL = 30, PW = 52, PH = 34;     // tile size, map dims
+// tile types: 0 air, 1 dirt, 2 rock, 3 ore, 4 fuel, 5 wall, 6 base-wall
+const TILE_HP = { 1: 25, 2: 55, 3: 35, 4: 35, 5: 80, 6: 110 };
+const TILE_COL = { 1: '#5e4630', 2: '#4a4f5a', 3: '#b06a2a', 4: '#2a8a6a', 5: '#6e92c8', 6: '#8a4a5e' };
+let ptiles, rover, pguards, pturrets, pcore, pres, pdig, pBuildSel, pdebris, pwon, pdead, pbuilt, ptileDmg;
 const autoBtn  = { x: 0, y: 0, w: 150, h: 38 };
 const pauseBtn = { x: 0, y: 0, w: 120, h: 38 };
 const allBtn   = { x: 0, y: 0, w: 140, h: 38 };
@@ -67,27 +74,41 @@ const flagship = () => allies[0];
 
 // ---------- input ----------
 addEventListener('keydown', e => {
+  if (mode === 'planet') {
+    if (e.code === 'KeyR') mode = 'editor';
+    if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
+    if (e.code === 'Digit1') pBuildSel = 'wall';
+    if (e.code === 'Digit2') pBuildSel = 'turret';
+    if (e.code === 'Escape') pBuildSel = null;
+    return;
+  }
   if (mode !== 'flight') return;
   if (e.code === 'KeyP') autopilot = !autopilot;
   if (e.code === 'KeyA') selectAll();
   if (e.code === 'KeyR') mode = 'editor';
+  if (e.code === 'KeyL' && won) initPlanet();
   if (e.code === 'KeyF') { const f = allies.find(s => s.alive); if (f) { cam.x = f.x; cam.y = f.y; } }
   if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
 });
 addEventListener('mousedown', e => {
   if (mode === 'editor') { if (e.button === 0) editorClick(e.clientX, e.clientY); return; }
+  if (mode === 'planet') {
+    if (e.button === 1 || e.button === 2) { dragging = true; dragLast = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
+    if (e.button === 0) planetClick(e.clientX, e.clientY);
+    return;
+  }
   if (e.button === 1 || e.button === 2) { dragging = true; dragLast = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
   if (e.button === 0) flightClick(e.clientX, e.clientY, e.shiftKey);
 });
 addEventListener('mousemove', e => {
-  if (!dragging || mode !== 'flight') return;
+  if (!dragging || (mode !== 'flight' && mode !== 'planet')) return;
   cam.x -= (e.clientX - dragLast.x) / cam.zoom;
   cam.y -= (e.clientY - dragLast.y) / cam.zoom;
   dragLast = { x: e.clientX, y: e.clientY };
 });
 addEventListener('mouseup', () => { dragging = false; });
 addEventListener('wheel', e => {
-  if (mode !== 'flight') return;
+  if (mode !== 'flight' && mode !== 'planet') return;
   const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
   const n = Math.max(0.4, Math.min(1.8, cam.zoom * k));
   // zoom toward cursor
@@ -240,10 +261,20 @@ function launch() {
     turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true }))
   };
   planet = { x: 2400, y: 800, r: 420 };
+  // asteroid field between spawn and the station — destructible cover
+  asteroids = [];
+  const apos = [[-100, -300], [200, 200], [450, -150], [700, 100], [100, 500], [900, -450], [1200, 350], [1500, -500], [400, -550], [-300, 400]];
+  for (const [ax, ay] of apos) asteroids.push(makeAsteroid(ax + rand(-40, 40), ay + rand(-40, 40), rand(26, 58)));
   bullets = []; particles = [];
   stars = [];
   for (let j = 0; j < 500; j++)
     stars.push({ x: rand(-2500, 5000), y: rand(-2500, 2500), s: rand(0.4, 1.8), d: rand(0.2, 0.9) });
+}
+
+function makeAsteroid(x, y, r) {
+  const n = 9, verts = [];
+  for (let i = 0; i < n; i++) verts.push({ a: i / n * TAU, d: r * rand(0.65, 1.15) });
+  return { x, y, r, verts, vx: rand(-8, 8), vy: rand(-8, 8), rot: rand(0, TAU), va: rand(-0.2, 0.2), hp: Math.round(r * 1.6) };
 }
 
 function turretPos(t) {
@@ -482,9 +513,38 @@ function update(dt) {
     }
   }
 
+  // asteroids drift; ships can't pass through them
+  for (const a of asteroids) {
+    a.x += a.vx * dt; a.y += a.vy * dt; a.rot += a.va * dt;
+    for (const s of [...allies, ...foes]) {
+      if (!s.alive) continue;
+      const d = dist(a, s), rr = a.r + s.radius * 0.7;
+      if (d < rr && d > 0) {
+        const nx = (s.x - a.x) / d, ny = (s.y - a.y) / d;
+        s.x = a.x + nx * rr; s.y = a.y + ny * rr;
+        const push = Math.max(0, -(s.vx * nx + s.vy * ny));
+        s.vx += nx * push * 0.8; s.vy += ny * push * 0.8;
+      }
+    }
+  }
+
   for (const b of bullets) {
     b.x += b.vx * dt; b.y += b.vy * dt; b.ttl -= dt;
     if (b.ttl <= 0) continue;
+    // bullets smack into asteroids — they work as cover and as minable rocks
+    let hitRock = false;
+    for (const a of asteroids) {
+      if (Math.hypot(b.x - a.x, b.y - a.y) < a.r) {
+        a.hp -= b.dmg; b.ttl = 0; hitRock = true;
+        explode(b.x, b.y, '#8a8f9a', 4);
+        if (a.hp <= 0) {
+          a.dead = true; explode(a.x, a.y, '#8a8f9a', 30);
+          debris.push({ x: a.x, y: a.y, vx: rand(-30, 30), vy: rand(-30, 30), a: rand(0, TAU), va: 2, v: 3, t: 'hull' });
+        }
+        break;
+      }
+    }
+    if (hitRock) continue;
     if (b.team === 'foe') {
       for (const s of allies) if (s.alive && dist(b, s) < s.radius + 20) hitShip(s, b);
     } else {
@@ -504,6 +564,7 @@ function update(dt) {
     }
   }
   bullets = bullets.filter(b => b.ttl > 0);
+  asteroids = asteroids.filter(a => !a.dead);
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
   particles = particles.filter(p => p.ttl > 0);
@@ -681,6 +742,7 @@ function drawOrderMarker(s) {
 
 function draw() {
   if (mode === 'editor') { drawEditor(); return; }
+  if (mode === 'planet') { pDraw(); return; }
   ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
   ctx.save();
   ctx.translate(W / 2, H / 2);
@@ -704,6 +766,21 @@ function draw() {
   g.addColorStop(0, '#2a4a6e'); g.addColorStop(1, '#0a1524');
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(planet.x, planet.y, planet.r, 0, TAU); ctx.fill();
+
+  // asteroids
+  for (const a of asteroids) {
+    ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(a.rot);
+    ctx.fillStyle = '#3a3f4a'; ctx.strokeStyle = '#5a6170'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < a.verts.length; i++) {
+      const v = a.verts[i];
+      i ? ctx.lineTo(Math.cos(v.a) * v.d, Math.sin(v.a) * v.d) : ctx.moveTo(Math.cos(v.a) * v.d, Math.sin(v.a) * v.d);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#4a5060';
+    ctx.beginPath(); ctx.arc(-a.r * 0.25, -a.r * 0.2, a.r * 0.22, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
 
   // station
   ctx.save();
@@ -825,8 +902,400 @@ function draw() {
     ctx.fillText('Space or RESUME to continue', W / 2, H / 2 + 36);
     ctx.textAlign = 'left';
   }
-  if (won) { ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('STATION DESTROYED — SALVAGE SECURED  (R: rebuild)', W / 2, H / 2); ctx.textAlign = 'left'; }
+  if (won) { ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('STATION DESTROYED — L: LAND ON PLANET   R: rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
   if (dead) { ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('FLAGSHIP LOST — press R to rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
+}
+
+// ==================== PLANET MODE ====================
+// Top-down tile world (Terraria/CW-style): dig terrain, mine ore+fuel,
+// raid the enemy base (destructible walls), build your own walls/turrets.
+
+const tileAt = (c, r) => (c < 0 || r < 0 || c >= PW || r >= PH) ? 2 : ptiles[r][c];
+const solidPx = (x, y) => tileAt(Math.floor(x / TIL), Math.floor(y / TIL)) !== 0;
+const tpos = o => ({ x: o.tx * TIL + TIL / 2, y: o.ty * TIL + TIL / 2 });
+
+function initPlanet() {
+  mode = 'planet';
+  paused = false; pwon = false; pdead = false; pdig = null; pBuildSel = null; msg = null;
+  pres = pres || { ore: 10, fuel: 5 };
+  ptileDmg = {};
+  ptiles = Array.from({ length: PH }, () => Array(PW).fill(0));
+  const surf = 8;
+  for (let y = surf; y < PH; y++) for (let x = 0; x < PW; x++)
+    ptiles[y][x] = Math.random() < 0.10 ? 2 : 1;
+  for (let y = Math.floor(PH * 0.72); y < PH; y++) for (let x = 0; x < PW; x++)
+    if (Math.random() < 0.45) ptiles[y][x] = 2;
+  // caverns via random walks
+  for (let i = 0; i < 16; i++) {
+    let x = Math.floor(rand(4, PW - 8)), y = surf + Math.floor(rand(2, PH - surf - 4));
+    for (let s = 0; s < 24; s++) {
+      ptiles[y][x] = 0;
+      x = Math.max(1, Math.min(PW - 2, x + Math.floor(rand(-1, 2))));
+      y = Math.max(surf + 1, Math.min(PH - 2, y + Math.floor(rand(-1, 2))));
+    }
+  }
+  // ore / fuel veins
+  for (let i = 0; i < 24; i++) {
+    const t = Math.random() < 0.6 ? 3 : 4;
+    let x = Math.floor(rand(3, PW - 3)), y = Math.floor(rand(surf + 2, PH - 2));
+    for (let k = 0; k < 6; k++) {
+      if (ptiles[y] && (ptiles[y][x] === 1 || ptiles[y][x] === 2)) ptiles[y][x] = t;
+      x = Math.max(1, Math.min(PW - 2, x + Math.floor(rand(-1, 2))));
+      y = Math.max(surf + 1, Math.min(PH - 1, y + Math.floor(rand(-1, 2))));
+    }
+  }
+  // enemy base — walled bunker carved into the ground, door on the left
+  const bx = PW - 19, by = surf - 1, bw = 16, bh = 9;
+  for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) ptiles[y][x] = 0;
+  for (let x = bx; x < bx + bw; x++) { ptiles[by][x] = 6; ptiles[by + bh - 1][x] = 6; }
+  for (let y = by; y < by + bh; y++) { ptiles[y][bx] = 6; ptiles[y][bx + bw - 1] = 6; }
+  ptiles[by + 4][bx] = 0; // breach / door
+  pturrets = [
+    { tx: bx + 3, ty: by + 1, hp: 60, maxHp: 60, cd: rand(0, 1), alive: true },
+    { tx: bx + 10, ty: by + 1, hp: 60, maxHp: 60, cd: rand(0, 1), alive: true },
+    { tx: bx + 7, ty: by + bh - 2, hp: 60, maxHp: 60, cd: rand(0, 1), alive: true },
+  ];
+  pcore = { tx: bx + 12, ty: by + 4, hp: 150, maxHp: 150, alive: true };
+  pguards = [mkGuard(bx + 5, by + 5), mkGuard(bx + 11, by + 6), mkGuard(bx + 2, by + 2)];
+  pbuilt = [];
+  rover = { x: 3 * TIL, y: (surf - 0.5) * TIL, vx: 0, vy: 0, angle: 0, hp: 140, maxHp: 140, cd: 0, order: null, target: null, alive: true };
+  bullets = []; particles = []; pdebris = [];
+  cam.x = rover.x; cam.y = rover.y; cam.zoom = 1;
+  msg = { text: 'LANDER DOWN — dig in, break the base, grab the loot', t: 5 };
+}
+
+function mkGuard(tx, ty) {
+  return { x: tx * TIL + TIL / 2, y: ty * TIL + TIL / 2, vx: 0, vy: 0, angle: 0, hp: 45, maxHp: 45, cd: rand(0, 1), alive: true };
+}
+
+const PB = [
+  { key: 'wall', cost: 4, name: 'WALL' },
+  { key: 'turret', cost: 12, name: 'TURRET' },
+];
+const pbtnRects = [];
+
+function planetClick(mx, my) {
+  // build palette
+  for (let i = 0; i < PB.length; i++) {
+    const r = pbtnRects[i];
+    if (r && inRect(r, mx, my)) { pBuildSel = pBuildSel === PB[i].key ? null : PB[i].key; return; }
+  }
+  const p = screenToWorld(mx, my);
+  const c = Math.floor(p.x / TIL), r = Math.floor(p.y / TIL);
+  const inRng = Math.hypot(p.x - rover.x, p.y - rover.y) / TIL;
+
+  // build placement
+  if (pBuildSel) {
+    const spec = PB.find(b => b.key === pBuildSel);
+    if (tileAt(c, r) === 0 && inRng < 8 && pres.ore >= spec.cost) {
+      pres.ore -= spec.cost;
+      if (spec.key === 'wall') ptiles[r][c] = 5;
+      else pbuilt.push({ c, r, hp: 40, cd: 0, alive: true });
+    }
+    return;
+  }
+  // target enemies
+  for (const t of pturrets) if (t.alive && dist(p, tpos(t)) < 24) { rover.target = t; return; }
+  for (const g of pguards) if (g.alive && dist(p, g) < 22) { rover.target = g; return; }
+  if (pcore.alive && dist(p, tpos(pcore)) < 30) { rover.target = pcore; return; }
+  // dig
+  if (tileAt(c, r) !== 0 && inRng < 4) { pdig = { c, r, t: TILE_HP[tileAt(c, r)] / 45, max: TILE_HP[tileAt(c, r)] / 45 }; rover.target = null; return; }
+  // move
+  if (tileAt(c, r) === 0) { rover.order = p; rover.target = null; }
+}
+
+function pUpdate(dt) {
+  time += dt;
+  if (!rover.alive) { pdead = true; return; }
+
+  if (rover.order) {
+    const d = dist(rover, rover.order);
+    if (d < 10) rover.order = null;
+    else {
+      const sp = 150, a = angleTo(rover, rover.order);
+      const nx = rover.x + Math.cos(a) * sp * dt, ny = rover.y + Math.sin(a) * sp * dt;
+      const rr = 11;
+      if (!solidPx(nx - rr, rover.y - rr) && !solidPx(nx + rr, rover.y - rr) && !solidPx(nx - rr, rover.y + rr) && !solidPx(nx + rr, rover.y + rr)) rover.x = nx;
+      if (!solidPx(rover.x - rr, ny - rr) && !solidPx(rover.x + rr, ny - rr) && !solidPx(rover.x - rr, ny + rr) && !solidPx(rover.x + rr, ny + rr)) rover.y = ny;
+      rover.angle = a;
+    }
+  }
+
+  if (pdig) {
+    const cx = pdig.c * TIL + TIL / 2, cy = pdig.r * TIL + TIL / 2;
+    if (Math.hypot(cx - rover.x, cy - rover.y) / TIL > 4.2) { pdig = null; }
+    else {
+      rover.angle = Math.atan2(cy - rover.y, cx - rover.x);
+      pdig.t -= dt;
+      if (pdig.t <= 0) {
+        const t = ptiles[pdig.r][pdig.c];
+        ptiles[pdig.r][pdig.c] = 0;
+        explode(cx, cy, TILE_COL[t] || '#888', 8);
+        if (t === 3) pdebris.push({ x: cx, y: cy, vx: rand(-25, 25), vy: rand(-25, 25), k: 'ore', v: 2 });
+        if (t === 4) pdebris.push({ x: cx, y: cy, vx: rand(-25, 25), vy: rand(-25, 25), k: 'fuel', v: 2 });
+        pdig = null;
+      }
+    }
+  }
+
+  rover.cd -= dt;
+  if (rover.target && rover.target.alive !== false && rover.target.hp > 0) {
+    const tp = rover.target.tx !== undefined ? tpos(rover.target) : rover.target;
+    rover.angle = angleTo(rover, tp);
+    if (rover.cd <= 0 && dist(rover, tp) < 360) {
+      rover.cd = 0.45;
+      bullets.push({ x: rover.x, y: rover.y, vx: Math.cos(rover.angle) * 400, vy: Math.sin(rover.angle) * 400, ttl: 1.2, dmg: 9, team: 'ally' });
+      particles.push({ x: rover.x + Math.cos(rover.angle) * 14, y: rover.y + Math.sin(rover.angle) * 14, vx: rand(-15, 15), vy: rand(-15, 15), ttl: 0.1, max: 0.1, color: '#ffd27f', r: 3 });
+    }
+  } else rover.target = null;
+
+  for (const t of pturrets) {
+    if (!t.alive) continue; t.cd -= dt;
+    const p = tpos(t);
+    if (dist(p, rover) < 400 && t.cd <= 0) {
+      t.cd = 1.2;
+      const a = angleTo(p, rover);
+      bullets.push({ x: p.x, y: p.y, vx: Math.cos(a) * 300, vy: Math.sin(a) * 300, ttl: 1.8, dmg: 10, team: 'foe' });
+    }
+  }
+
+  for (const g of pguards) {
+    if (!g.alive) continue;
+    const d = dist(g, rover);
+    if (d < 320 && d > 0) {
+      const a = angleTo(g, rover);
+      const nx = g.x + Math.cos(a) * 100 * dt, ny = g.y + Math.sin(a) * 100 * dt;
+      if (!solidPx(nx, g.y)) g.x = nx;
+      if (!solidPx(g.x, ny)) g.y = ny;
+      g.angle = a;
+    }
+    g.cd -= dt;
+    if (d < 300 && g.cd <= 0) {
+      g.cd = 0.9;
+      const a = angleTo(g, rover);
+      bullets.push({ x: g.x, y: g.y, vx: Math.cos(a) * 290, vy: Math.sin(a) * 290, ttl: 1.6, dmg: 8, team: 'foe' });
+    }
+  }
+
+  // player-built turrets defend you
+  for (const t of pbuilt) {
+    if (!t.alive) continue; t.cd -= dt;
+    const p = { x: t.c * TIL + TIL / 2, y: t.r * TIL + TIL / 2 };
+    let best = null, bd = 380;
+    for (const g of pguards) if (g.alive && dist(p, g) < bd) { bd = dist(p, g); best = g; }
+    for (const e of pturrets) if (e.alive && dist(p, tpos(e)) < bd) { bd = dist(p, tpos(e)); best = tpos(e); }
+    if (best && t.cd <= 0) {
+      t.cd = 0.7;
+      const a = angleTo(p, best);
+      bullets.push({ x: p.x, y: p.y, vx: Math.cos(a) * 380, vy: Math.sin(a) * 380, ttl: 1.3, dmg: 8, team: 'ally' });
+    }
+  }
+
+  for (const b of bullets) {
+    b.x += b.vx * dt; b.y += b.vy * dt; b.ttl -= dt;
+    if (b.ttl <= 0) continue;
+    if (solidPx(b.x, b.y)) {
+      const c = Math.floor(b.x / TIL), r = Math.floor(b.y / TIL), t = ptiles[r][c];
+      b.ttl = 0; explode(b.x, b.y, TILE_COL[t] || '#888', 4);
+      // bullets chip through walls; dirt/rock just absorb
+      if (t === 5 || t === 6) {
+        const k = r * PW + c;
+        ptileDmg[k] = (ptileDmg[k] || 0) + b.dmg;
+        if (ptileDmg[k] >= TILE_HP[t]) { ptiles[r][c] = 0; delete ptileDmg[k]; explode(c * TIL + TIL / 2, r * TIL + TIL / 2, TILE_COL[t], 12); }
+      }
+      continue;
+    }
+    if (b.team === 'foe') {
+      if (dist(b, rover) < 13) {
+        rover.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ff8a7a', 6);
+        if (rover.hp <= 0) { rover.alive = false; explode(rover.x, rover.y, '#7fd4ff', 40); }
+      }
+      for (const t of pbuilt) {
+        if (!t.alive) continue;
+        const p = { x: t.c * TIL + TIL / 2, y: t.r * TIL + TIL / 2 };
+        if (dist(b, p) < 14) { t.hp -= b.dmg; b.ttl = 0; if (t.hp <= 0) { t.alive = false; explode(p.x, p.y, '#7fd4ff', 18); } }
+      }
+    } else {
+      for (const t of pturrets) if (t.alive && dist(b, tpos(t)) < 15) {
+        t.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ffd27f', 5);
+        if (t.hp <= 0) { t.alive = false; explode(b.x, b.y, '#ff8a7a', 24); }
+      }
+      for (const g of pguards) if (g.alive && dist(b, g) < 13) {
+        g.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ffd27f', 5);
+        if (g.hp <= 0) { g.alive = false; explode(g.x, g.y, '#ff8a7a', 24); }
+      }
+      if (pcore.alive && dist(b, tpos(pcore)) < 20) {
+        pcore.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#c8a2ff', 6);
+        if (pcore.hp <= 0) {
+          pcore.alive = false; pwon = true;
+          salvage += 15; pres.ore += 20; pres.fuel += 10;
+          explode(b.x, b.y, '#ffffff', 60);
+        }
+      }
+    }
+  }
+  bullets = bullets.filter(b => b.ttl > 0);
+
+  for (const d of pdebris) {
+    d.x += d.vx * dt; d.y += d.vy * dt; d.vx *= (1 - 2 * dt); d.vy *= (1 - 2 * dt);
+    if (dist(d, rover) < 26) { d.got = true; pres[d.k] += d.v; explode(d.x, d.y, '#ffcf6e', 4); }
+  }
+  pdebris = pdebris.filter(d => !d.got);
+
+  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
+  particles = particles.filter(p => p.ttl > 0);
+  if (msg) { msg.t -= dt; if (msg.t <= 0) msg = null; }
+}
+
+function pDraw() {
+  const vhw = W / 2 / cam.zoom, vhh = H / 2 / cam.zoom;
+  ctx.fillStyle = '#0a0d14'; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(W / 2, H / 2); ctx.scale(cam.zoom, cam.zoom); ctx.translate(-cam.x, -cam.y);
+
+  // sky strip above the surface
+  ctx.fillStyle = '#0e1626';
+  ctx.fillRect(0, -TIL * 4, PW * TIL, TIL * 12);
+
+  // tiles
+  const c0 = Math.max(0, Math.floor((cam.x - vhw) / TIL)), c1 = Math.min(PW, Math.ceil((cam.x + vhw) / TIL));
+  const r0 = Math.max(0, Math.floor((cam.y - vhh) / TIL)), r1 = Math.min(PH, Math.ceil((cam.y + vhh) / TIL));
+  for (let r = r0; r < r1; r++) for (let c = c0; c < c1; c++) {
+    const t = ptiles[r][c];
+    if (!t) continue;
+    ctx.fillStyle = TILE_COL[t];
+    ctx.fillRect(c * TIL, r * TIL, TIL, TIL);
+    // top edge highlight like CW columns
+    if (r > 0 && ptiles[r - 1][c] === 0) { ctx.fillStyle = 'rgba(255,255,255,0.14)'; ctx.fillRect(c * TIL, r * TIL, TIL, 3); }
+    if (t === 3) { ctx.fillStyle = '#ff9d3a'; ctx.fillRect(c * TIL + 9, r * TIL + 9, 12, 12); }
+    if (t === 4) { ctx.fillStyle = '#3ae8a8'; ctx.fillRect(c * TIL + 9, r * TIL + 9, 12, 12); }
+    if (t >= 5) { ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 2; ctx.strokeRect(c * TIL + 1, r * TIL + 1, TIL - 2, TIL - 2); }
+    if (r + 1 < PH && ptiles[r + 1][c] !== 0) { ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(c * TIL, r * TIL + TIL - 4, TIL, 4); }
+  }
+
+  // enemy base turrets (Blender sprites, barrels track rover)
+  for (const t of pturrets) {
+    if (!t.alive) continue;
+    const p = tpos(t);
+    ctx.save(); ctx.translate(p.x, p.y);
+    if (sprReady(SPRITES.st_base)) ctx.drawImage(SPRITES.st_base, -TIL * 0.75, -TIL * 0.75, TIL * 1.5, TIL * 1.5);
+    ctx.restore();
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(angleTo(p, rover));
+    if (sprReady(SPRITES.st_barrel)) ctx.drawImage(SPRITES.st_barrel, -TIL * 0.75, -TIL * 0.75, TIL * 1.5, TIL * 1.5);
+    ctx.restore();
+    ctx.fillStyle = '#222'; ctx.fillRect(p.x - 12, p.y - 20, 24, 3);
+    ctx.fillStyle = '#ff8a7a'; ctx.fillRect(p.x - 12, p.y - 20, 24 * t.hp / t.maxHp, 3);
+  }
+
+  // base core
+  if (pcore.alive) {
+    const p = tpos(pcore);
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#2a1a4a'; ctx.strokeStyle = '#c8a2ff'; ctx.lineWidth = 2;
+    ctx.fillRect(-16, -16, 32, 32); ctx.strokeRect(-16, -16, 32, 32);
+    ctx.fillStyle = '#c8a2ff'; ctx.fillRect(-6, -6, 12, 12);
+    ctx.restore();
+    ctx.fillStyle = '#222'; ctx.fillRect(p.x - 16, p.y - 30, 32, 4);
+    ctx.fillStyle = '#c8a2ff'; ctx.fillRect(p.x - 16, p.y - 30, 32 * pcore.hp / pcore.maxHp, 4);
+  }
+
+  // guards
+  for (const g of pguards) {
+    if (!g.alive) continue;
+    ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(g.angle);
+    ctx.fillStyle = '#5e2a2a'; ctx.strokeStyle = '#ff8a7a'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-8, -9); ctx.lineTo(-8, 9); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ff8a7a'; ctx.fillRect(6, -2, 8, 4);
+    ctx.restore();
+  }
+
+  // player-built turrets
+  for (const t of pbuilt) {
+    if (!t.alive) continue;
+    const p = { x: t.c * TIL + TIL / 2, y: t.r * TIL + TIL / 2 };
+    ctx.save(); ctx.translate(p.x, p.y);
+    if (sprReady(SPRITES.gun_base)) ctx.drawImage(SPRITES.gun_base, -13, -13, 26, 26);
+    else { ctx.fillStyle = '#2a4a5e'; ctx.fillRect(-10, -10, 20, 20); }
+    ctx.restore();
+  }
+
+  // debris pickups
+  for (const d of pdebris) {
+    ctx.fillStyle = d.k === 'ore' ? '#ff9d3a' : '#3ae8a8';
+    ctx.fillRect(d.x - 4, d.y - 4, 8, 8);
+    ctx.strokeStyle = '#ffffff55'; ctx.strokeRect(d.x - 4, d.y - 4, 8, 8);
+  }
+
+  // dig indicator
+  if (pdig) {
+    ctx.strokeStyle = '#ffcf6e'; ctx.lineWidth = 2;
+    ctx.strokeRect(pdig.c * TIL + 2, pdig.r * TIL + 2, TIL - 4, TIL - 4);
+    ctx.fillStyle = '#ffcf6e';
+    ctx.fillRect(pdig.c * TIL + 4, pdig.r * TIL - 8, (TIL - 8) * (1 - pdig.t / pdig.max), 4);
+  }
+
+  // rover
+  if (rover.alive) {
+    ctx.save(); ctx.translate(rover.x, rover.y); ctx.rotate(rover.angle);
+    ctx.fillStyle = '#1e2a3a'; ctx.strokeStyle = '#7fd4ff'; ctx.lineWidth = 2;
+    ctx.fillRect(-13, -10, 26, 20); ctx.strokeRect(-13, -10, 26, 20);
+    ctx.fillStyle = '#0d1426'; ctx.fillRect(-13, -13, 26, 5); ctx.fillRect(-13, 8, 26, 5); // treads
+    ctx.fillStyle = '#7fd4ff'; ctx.fillRect(0, -3, 18, 6); // gun
+    ctx.fillStyle = '#ffcf6e'; ctx.fillRect(-6, -5, 8, 10); // cab
+    ctx.restore();
+  }
+
+  for (const b of bullets) {
+    ctx.strokeStyle = b.team === 'foe' ? 'rgba(255,110,92,0.4)' : 'rgba(127,212,255,0.4)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(b.x - b.vx * 0.03, b.y - b.vy * 0.03); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.fillStyle = b.team === 'foe' ? '#ff6e5c' : '#7fd4ff';
+    ctx.fillRect(b.x - 2.5, b.y - 2.5, 5, 5);
+  }
+  for (const p of particles) {
+    ctx.globalAlpha = p.ttl / p.max; ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.r / 2, p.y - p.r / 2, p.r, p.r);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // ---------- HUD ----------
+  ctx.fillStyle = '#7fd4ff'; ctx.font = '14px monospace';
+  ctx.fillText(`LANDER  HP ${Math.max(0, Math.round(rover.hp))}/${rover.maxHp}`, 16, 24);
+  ctx.fillStyle = '#ff9d3a'; ctx.fillText(`ORE ${pres.ore}`, 16, 44);
+  ctx.fillStyle = '#3ae8a8'; ctx.fillText(`FUEL ${pres.fuel}`, 16, 64);
+  ctx.fillStyle = '#ffcf6e'; ctx.fillText(`SALVAGE +${salvage}`, 16, 84);
+
+  ctx.fillStyle = '#ff8a7a'; ctx.textAlign = 'right';
+  ctx.fillText(`BASE  TURRETS ${pturrets.filter(t => t.alive).length}/3  CORE ${pcore.alive ? Math.round(pcore.hp) : 'DOWN'}`, W - 16, 24);
+  ctx.textAlign = 'left';
+
+  // build palette
+  let bx = 16;
+  PB.forEach((b, i) => {
+    const r = { x: bx, y: H - 60, w: 110, h: 42 };
+    pbtnRects[i] = r; bx += 120;
+    const sel = pBuildSel === b.key, afford = pres.ore >= b.cost;
+    ctx.fillStyle = sel ? '#14261c' : '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = sel ? '#9dff8a' : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = afford ? '#8aa0c8' : '#4a5a7a'; ctx.font = 'bold 13px monospace';
+    ctx.fillText(`${b.name} (${i + 1})`, r.x + 10, r.y + 18);
+    ctx.fillStyle = '#ff9d3a'; ctx.font = '12px monospace';
+    ctx.fillText(`${b.cost} ore`, r.x + 10, r.y + 34);
+  });
+
+  ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
+  ctx.fillText('LMB ground: move   LMB tile: dig   LMB enemy: target   1/2: build   RMB drag: pan   wheel: zoom   R: shipyard', 16, H - 68 + 78);
+
+  if (msg) { ctx.fillStyle = '#ffcf6e'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText(msg.text, W / 2, 60); ctx.textAlign = 'left'; }
+  if (paused) {
+    ctx.fillStyle = 'rgba(5,7,13,0.55)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', W / 2, H / 2); ctx.textAlign = 'left';
+  }
+  if (pwon) { ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('BASE CRUSHED — LOOT SECURED  (R: shipyard)', W / 2, H / 2); ctx.textAlign = 'left'; }
+  if (pdead) { ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('LANDER LOST — press R to rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
 }
 
 // ---------- loop ----------
@@ -835,6 +1304,7 @@ function loop(now) {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
   if (mode === 'flight' && !paused) update(dt);
+  if (mode === 'planet' && !paused) pUpdate(dt);
   draw();
   requestAnimationFrame(loop);
 }
