@@ -54,6 +54,8 @@ let rosterSel = new Set();   // chosen escort indices
 let paused = false, autopilot = false, won = false, dead = false, time = 0;
 let salvage = 0, debris = [], msg = null, reinforced = false;
 const budget = () => BUDGET + salvage;
+let cam = { x: 0, y: 0, zoom: 1 };   // free camera: wheel zoom, RMB/MMB drag pan, F re-center
+let dragging = false, dragLast = null;
 const autoBtn  = { x: 0, y: 0, w: 150, h: 38 };
 const pauseBtn = { x: 0, y: 0, w: 120, h: 38 };
 const allBtn   = { x: 0, y: 0, w: 140, h: 38 };
@@ -62,7 +64,6 @@ const palette = {};   // part key -> rect
 const rosterRects = []; // i -> rect
 
 const flagship = () => allies[0];
-const camShip = () => allies.find(s => s.alive) || { x: 0, y: 0 };
 
 // ---------- input ----------
 addEventListener('keydown', e => {
@@ -70,13 +71,31 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyP') autopilot = !autopilot;
   if (e.code === 'KeyA') selectAll();
   if (e.code === 'KeyR') mode = 'editor';
+  if (e.code === 'KeyF') { const f = allies.find(s => s.alive); if (f) { cam.x = f.x; cam.y = f.y; } }
   if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
 });
 addEventListener('mousedown', e => {
-  if (e.button !== 0) return;
-  if (mode === 'editor') editorClick(e.clientX, e.clientY);
-  else flightClick(e.clientX, e.clientY, e.shiftKey);
+  if (mode === 'editor') { if (e.button === 0) editorClick(e.clientX, e.clientY); return; }
+  if (e.button === 1 || e.button === 2) { dragging = true; dragLast = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
+  if (e.button === 0) flightClick(e.clientX, e.clientY, e.shiftKey);
 });
+addEventListener('mousemove', e => {
+  if (!dragging || mode !== 'flight') return;
+  cam.x -= (e.clientX - dragLast.x) / cam.zoom;
+  cam.y -= (e.clientY - dragLast.y) / cam.zoom;
+  dragLast = { x: e.clientX, y: e.clientY };
+});
+addEventListener('mouseup', () => { dragging = false; });
+addEventListener('wheel', e => {
+  if (mode !== 'flight') return;
+  const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const n = Math.max(0.4, Math.min(1.8, cam.zoom * k));
+  // zoom toward cursor
+  cam.x += ((e.clientX - W / 2) / cam.zoom) * (1 - cam.zoom / n);
+  cam.y += ((e.clientY - H / 2) / cam.zoom) * (1 - cam.zoom / n);
+  cam.zoom = n;
+  e.preventDefault();
+}, { passive: false });
 addEventListener('contextmenu', e => e.preventDefault());
 
 function selectAll() {
@@ -199,6 +218,7 @@ function launch() {
   debris = []; msg = null; reinforced = false;
   const flag = makeShip(grid, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
+  cam.x = flag.x; cam.y = flag.y; cam.zoom = 1;
   let i = 0;
   for (const idx of rosterSel) {
     const r = ROSTER[idx];
@@ -212,6 +232,7 @@ function launch() {
     makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 950, 380, 'foe', '#ff8a7a'),
     makeShip(gridFromList([[4,2,'engine'],[4,3,'hull'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[3,5,'turret'],[5,5,'turret']]), 1250, -240, 'foe', '#ffb36e')
   ];
+  for (const f of foes) f.home = { x: f.x, y: f.y }; // guard anchor near the station
   station = {
     x: 1600, y: 0, r: 80, coreHp: 350, coreMax: 350,
     turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true }))
@@ -227,8 +248,8 @@ function turretPos(t) {
   return { x: station.x + Math.cos(t.a) * (station.r + 16), y: station.y + Math.sin(t.a) * (station.r + 16) };
 }
 
-function screenToWorld(mx, my, cam) {
-  return { x: mx - W / 2 + cam.x, y: my - H / 2 + cam.y };
+function screenToWorld(mx, my) {
+  return { x: (mx - W / 2) / cam.zoom + cam.x, y: (my - H / 2) / cam.zoom + cam.y };
 }
 
 function validTarget(t) {
@@ -242,8 +263,7 @@ function flightClick(mx, my, shift) {
   if (inRect(autoBtn, mx, my)) { autopilot = !autopilot; return; }
   if (inRect(pauseBtn, mx, my)) { paused = !paused; return; }
   if (inRect(allBtn, mx, my)) { selectAll(); return; }
-  const cam = camShip();
-  const p = screenToWorld(mx, my, cam);
+  const p = screenToWorld(mx, my);
 
   // click own ship -> select it (shift adds to selection)
   for (const s of allies) {
@@ -352,7 +372,12 @@ function shipBrain(s, dt) {
     thrusting = steerTo(s, o, dt, 30);
     if (dist(s, o) < 40) s.order = null;
   } else if (o && o.kind === 'follow' && o.t.alive) {
-    thrusting = steerTo(s, followPoint(s), dt, 60);
+    // join nearby fights but never stray far from the flagship
+    const nf = nearestFoe(s);
+    if (nf && dist(s, nf) < 430 && dist(s, o.t) < 850)
+      thrusting = steerTo(s, attackPoint(s, nf), dt, 60);
+    else
+      thrusting = steerTo(s, followPoint(s), dt, 60);
   }
   s.thrusting = thrusting;
 }
@@ -408,8 +433,15 @@ function update(dt) {
 
   for (const f of foes) {
     if (!f.alive) continue;
+    // station guards: engage intruders, otherwise hold near home — no chasing across the map
     const t = nearestAlly(f);
-    if (t) f.thrusting = steerTo(f, attackPoint(f, t), dt, 60);
+    const engage = t && (dist(t, station) < 950 || dist(f, t) < 700);
+    if (engage) {
+      if (dist(f, t) < 480) f.thrusting = steerTo(f, attackPoint(f, t), dt, 60);
+      else f.thrusting = steerTo(f, t, dt, 60);
+    } else {
+      f.thrusting = steerTo(f, f.home || station, dt, 80);
+    }
     f.angle += f.va * dt;
     f.x += f.vx * dt; f.y += f.vy * dt;
     autoFire(f, dt, null);
@@ -476,6 +508,13 @@ function update(dt) {
     }
   }
   debris = debris.filter(d => !d.got);
+
+  // dead in the water: a ship with no engines left bleeds off speed and stalls
+  for (const s of [...allies, ...foes]) {
+    if (!s.alive || s.blocks.some(b => b.type === 'engine')) continue;
+    s.vx *= (1 - 1.4 * dt); s.vy *= (1 - 1.4 * dt); s.va *= (1 - 2 * dt);
+    s.thrusting = false;
+  }
 
   if (msg) { msg.t -= dt; if (msg.t <= 0) msg = null; }
 
@@ -629,15 +668,17 @@ function drawOrderMarker(s) {
 
 function draw() {
   if (mode === 'editor') { drawEditor(); return; }
-  const cam = camShip();
   ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
   ctx.save();
-  ctx.translate(W / 2 - cam.x, H / 2 - cam.y);
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-cam.x, -cam.y);
 
-  ctx.strokeStyle = 'rgba(40,60,100,0.16)'; ctx.lineWidth = 1;
-  const step = 90, x0 = Math.floor((cam.x - W / 2) / step) * step, y0 = Math.floor((cam.y - H / 2) / step) * step;
-  for (let x = x0; x < cam.x + W / 2 + step; x += step) { ctx.beginPath(); ctx.moveTo(x, cam.y - H / 2); ctx.lineTo(x, cam.y + H / 2); ctx.stroke(); }
-  for (let y = y0; y < cam.y + H / 2 + step; y += step) { ctx.beginPath(); ctx.moveTo(cam.x - W / 2, y); ctx.lineTo(cam.x + W / 2, y); ctx.stroke(); }
+  const vhw = W / 2 / cam.zoom, vhh = H / 2 / cam.zoom; // visible half-extents
+  ctx.strokeStyle = 'rgba(40,60,100,0.16)'; ctx.lineWidth = 1 / cam.zoom;
+  const step = 90, x0 = Math.floor((cam.x - vhw) / step) * step, y0 = Math.floor((cam.y - vhh) / step) * step;
+  for (let x = x0; x < cam.x + vhw + step; x += step) { ctx.beginPath(); ctx.moveTo(x, cam.y - vhh); ctx.lineTo(x, cam.y + vhh); ctx.stroke(); }
+  for (let y = y0; y < cam.y + vhh + step; y += step) { ctx.beginPath(); ctx.moveTo(cam.x - vhw, y); ctx.lineTo(cam.x + vhw, y); ctx.stroke(); }
 
   ctx.fillStyle = '#3a4a66';
   for (const st of stars) {
@@ -756,7 +797,7 @@ function draw() {
   btn(pauseBtn, paused ? 'RESUME' : 'PAUSE', paused);
 
   ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-  ctx.fillText('click own ship: select (shift = +)   click space: move   click enemy: attack   A: all   Space: pause   P: AI   R: shipyard', 16, H - 16);
+  ctx.fillText('LMB ship: select (shift=+)   LMB: move/attack   RMB drag: pan   wheel: zoom   F: flagship   A: all   Space: pause   P: AI   R: shipyard', 16, H - 16);
 
   if (msg) {
     ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
