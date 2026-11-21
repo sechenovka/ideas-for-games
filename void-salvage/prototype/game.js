@@ -21,6 +21,15 @@ const TYPES = {
 };
 const KEYS_ORDER = ['hull', 'engine', 'turret'];
 
+// ---------- sprites (rendered via Blender MCP) ----------
+const SPRITES = {};
+for (const k of ['hull', 'engine', 'gun', 'turret_st']) {
+  const img = new Image();
+  img.src = 'assets/' + k + '.png';
+  SPRITES[k] = img;
+}
+const spriteOf = t => t === 'turret' ? SPRITES.gun : SPRITES[t];
+
 // ---------- helpers ----------
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const angTo = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
@@ -396,8 +405,11 @@ function drawEditor() {
   for (let r = 0; r < GRID; r++) for (let c = 0; c < GRID; c++) {
     const x = gs.x + c * gs.s, y = gs.y + r * gs.s;
     const t = grid[r][c];
-    ctx.fillStyle = t ? TYPES[t].color : '#0b1220';
+    ctx.fillStyle = '#0b1220';
     ctx.fillRect(x + 1, y + 1, gs.s - 2, gs.s - 2);
+    const spr = t ? spriteOf(t) : null;
+    if (spr && spr.complete && spr.naturalWidth) ctx.drawImage(spr, x + 1, y + 1, gs.s - 2, gs.s - 2);
+    else if (t) { ctx.fillStyle = TYPES[t].color; ctx.fillRect(x + 1, y + 1, gs.s - 2, gs.s - 2); }
     ctx.strokeStyle = t ? TYPES[t].edge : '#1a2438';
     ctx.lineWidth = t ? 2 : 1;
     ctx.strokeRect(x + 1, y + 1, gs.s - 2, gs.s - 2);
@@ -452,16 +464,19 @@ function drawShip(s) {
     ctx.save();
     ctx.translate(p.x, p.y); ctx.rotate(s.angle);
     ctx.globalAlpha = fade;
-    ctx.fillStyle = T.color; ctx.fillRect(-CS / 2 + 1, -CS / 2 + 1, CS - 2, CS - 2);
+    const spr = spriteOf(b.type);
+    if (spr && spr.complete && spr.naturalWidth)
+      ctx.drawImage(spr, -CS / 2, -CS / 2, CS, CS);
+    else { // fallback while sprites load
+      ctx.fillStyle = T.color; ctx.fillRect(-CS / 2 + 1, -CS / 2 + 1, CS - 2, CS - 2);
+      ctx.strokeStyle = T.edge; ctx.strokeRect(-CS / 2 + 1, -CS / 2 + 1, CS - 2, CS - 2);
+    }
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = T.edge; ctx.lineWidth = 1.5;
-    ctx.strokeRect(-CS / 2 + 1, -CS / 2 + 1, CS - 2, CS - 2);
-    if (b.type === 'turret') { ctx.fillStyle = T.edge; ctx.fillRect(0, -2, CS / 2, 4); }
-    if (b.type === 'engine') { ctx.fillStyle = '#ff9d5c'; ctx.fillRect(-CS / 2, -3, 4, 6); }
+    // team color trim
+    ctx.strokeStyle = s.color; ctx.lineWidth = 1;
+    ctx.strokeRect(-CS / 2 + 0.5, -CS / 2 + 0.5, CS - 1, CS - 1);
     ctx.restore();
   }
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.beginPath(); ctx.arc(s.x, s.y, s.radius, 0, TAU); ctx.stroke();
 }
 
 function draw() {
@@ -504,8 +519,16 @@ function draw() {
   for (const t of station.turrets) {
     if (!t.alive) continue;
     const p = turretPos(t);
-    ctx.fillStyle = '#5e2a2a'; ctx.fillRect(p.x - 8, p.y - 8, 16, 16);
-    ctx.strokeStyle = '#ff8a7a'; ctx.lineWidth = 2; ctx.strokeRect(p.x - 8, p.y - 8, 16, 16);
+    // aim barrel at nearest ally
+    let aimA = t.a;
+    const tg = [player, escort].filter(s => s.alive).sort((a, b) => dist(p, a) - dist(p, b))[0];
+    if (tg) aimA = angTo(p, tg);
+    ctx.save();
+    ctx.translate(p.x, p.y); ctx.rotate(aimA);
+    if (SPRITES.turret_st.complete && SPRITES.turret_st.naturalWidth)
+      ctx.drawImage(SPRITES.turret_st, -18, -18, 36, 36);
+    else { ctx.fillStyle = '#5e2a2a'; ctx.fillRect(-8, -8, 16, 16); ctx.strokeStyle = '#ff8a7a'; ctx.strokeRect(-8, -8, 16, 16); }
+    ctx.restore();
     ctx.fillStyle = '#222'; ctx.fillRect(p.x - 10, p.y - 15, 20, 3);
     ctx.fillStyle = '#ff8a7a'; ctx.fillRect(p.x - 10, p.y - 15, 20 * t.hp / t.maxHp, 3);
   }

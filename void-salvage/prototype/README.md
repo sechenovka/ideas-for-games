@@ -12,6 +12,7 @@ Open `index.html` in any browser.
 - **Clean geometric visuals** (Creeper World direction, NOT pixel art): dark field, faint world grid, flat colored shapes, thin outlines.
 - **Mouse-order controls:** click empty space = fly there; click an enemy = lock target, your guns auto-aim and fire. No WASD.
 - **Per-block damage:** bullets knock out individual blocks — lose engines and you drift, lose all guns and you're toothless, lose every block and you're dead.
+- **Blender-rendered sprites** (`assets/*.png`): block parts and the station turret are top-down renders generated in Blender via the local MCP bridge — flat squares are a placeholder fallback only.
 - AI wingman, enemy fighters (also block-built), station with 6 destructible turrets + shielded core.
 - **Autopilot toggle (P or on-screen button):** hands the armada to AI — the manual/AI scheme from the design doc.
 
