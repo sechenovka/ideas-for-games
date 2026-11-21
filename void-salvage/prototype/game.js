@@ -232,7 +232,9 @@ function launch() {
     makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 950, 380, 'foe', '#ff8a7a'),
     makeShip(gridFromList([[4,2,'engine'],[4,3,'hull'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[3,5,'turret'],[5,5,'turret']]), 1250, -240, 'foe', '#ffb36e')
   ];
-  for (const f of foes) f.home = { x: f.x, y: f.y }; // guard anchor near the station
+  for (const f of foes) f.home = { x: f.x, y: f.y };
+  foes[0].role = 'interceptor'; // flies out to meet you
+  foes[1].role = 'interceptor';
   station = {
     x: 1600, y: 0, r: 80, coreHp: 350, coreMax: 350,
     turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true }))
@@ -300,19 +302,24 @@ function flightClick(mx, my, shift) {
 
 // ---------- flight logic ----------
 function steerTo(s, pt, dt, hold) {
-  const dA = angDiff(s.angle, angleTo(s, pt));
-  s.va += (Math.sign(dA) * s.turn - s.va * 3) * dt;
   const d = dist(s, pt);
   const dirx = (pt.x - s.x) / (d || 1), diry = (pt.y - s.y) / (d || 1);
-  const speedToward = s.vx * dirx + s.vy * diry;
-  const cap = Math.max(25, (d - hold) * 1.3); // brake before overshooting
-  if (Math.abs(dA) < 0.9 && d > hold && speedToward < cap) {
+  const dA = angDiff(s.angle, angleTo(s, pt));
+  s.va += (Math.sign(dA) * s.turn - s.va * 3) * dt;
+  // desired speed: full burn far away, ease off, zero at the point
+  const des = d <= hold ? 0 : Math.min(280, (d - hold) * 1.4 + 30);
+  const toward = s.vx * dirx + s.vy * diry;
+  const latX = s.vx - dirx * toward, latY = s.vy - diry * toward;
+  let th = false;
+  if (des > 0 && Math.abs(dA) < 0.8 && toward < des) {
     s.vx += Math.cos(s.angle) * s.thrust * dt;
     s.vy += Math.sin(s.angle) * s.thrust * dt;
-    return true;
+    th = true;
   }
-  if (d < hold + 40 || speedToward > cap + 30) { s.vx *= (1 - 1.4 * dt); s.vy *= (1 - 1.4 * dt); }
-  return false;
+  // maneuvering jets: kill lateral drift + overspeed so we actually arrive
+  s.vx -= latX * 1.6 * dt; s.vy -= latY * 1.6 * dt;
+  if (toward > des) { s.vx *= (1 - 1.8 * dt); s.vy *= (1 - 1.8 * dt); }
+  return th;
 }
 
 // orbit attack: circle the target at gun range instead of ramming it
@@ -367,18 +374,22 @@ function shipBrain(s, dt) {
   const o = s.order;
   let thrusting = false;
   if (o && o.kind === 'attack' && validTarget(o.t)) {
-    thrusting = steerTo(s, attackPoint(s, o.t), dt, 60) || thrusting;
+    thrusting = steerTo(s, attackPoint(s, o.t), dt, 40);
   } else if (o && o.kind === 'move') {
-    thrusting = steerTo(s, o, dt, 30);
-    if (dist(s, o) < 40) s.order = null;
-  } else if (o && o.kind === 'follow' && o.t.alive) {
-    // join nearby fights but never stray far from the flagship
-    const nf = nearestFoe(s);
-    if (nf && dist(s, nf) < 430 && dist(s, o.t) < 850)
-      thrusting = steerTo(s, attackPoint(s, nf), dt, 60);
-    else
-      thrusting = steerTo(s, followPoint(s), dt, 60);
+    thrusting = steerTo(s, o, dt, 24);
+    if (dist(s, o) < 30) s.order = null;
+  } else if (o && o.kind === 'follow') {
+    if (!o.t || !o.t.alive) {
+      s.order = null; // leader down — released
+    } else {
+      const nf = nearestFoe(s);
+      if (nf && dist(s, nf) < 430 && dist(s, o.t) < 850)
+        thrusting = steerTo(s, attackPoint(s, nf), dt, 40);
+      else
+        thrusting = steerTo(s, followPoint(s), dt, 50);
+    }
   }
+  if (!s.order) { s.vx *= (1 - 0.8 * dt); s.vy *= (1 - 0.8 * dt); } // idle: stop drifting
   s.thrusting = thrusting;
 }
 
@@ -433,9 +444,9 @@ function update(dt) {
 
   for (const f of foes) {
     if (!f.alive) continue;
-    // station guards: engage intruders, otherwise hold near home — no chasing across the map
+    // interceptors chase you anywhere; guards stay near the station
     const t = nearestAlly(f);
-    const engage = t && (dist(t, station) < 950 || dist(f, t) < 700);
+    const engage = t && (f.role === 'interceptor' || dist(t, station) < 950 || dist(f, t) < 700);
     if (engage) {
       if (dist(f, t) < 480) f.thrusting = steerTo(f, attackPoint(f, t), dt, 60);
       else f.thrusting = steerTo(f, t, dt, 60);
@@ -451,8 +462,10 @@ function update(dt) {
   if (!reinforced && station.turrets.every(t => !t.alive)) {
     reinforced = true;
     msg = { text: 'SHIELD DOWN — REINFORCEMENTS INBOUND', t: 4 };
-    foes.push(makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), station.x + 200, -300, 'foe', '#ff8a7a'));
-    foes.push(makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull']]), station.x + 200, 300, 'foe', '#ff8a7a'));
+    const r1 = makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), station.x + 200, -300, 'foe', '#ff8a7a');
+    const r2 = makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull']]), station.x + 200, 300, 'foe', '#ff8a7a');
+    r1.role = r2.role = 'interceptor';
+    foes.push(r1, r2);
   }
 
   for (const t of station.turrets) {
