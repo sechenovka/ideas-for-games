@@ -55,6 +55,17 @@ Sector map, branching missions:
 
 **Bases don't capture themselves** — the planetary phase is mandatory for a full clear. Full warehouse sack = full hold of loot; early retreat = what you grabbed.
 
+### Planetary layer — the base lives on the planet
+
+The raid target is **on the planet surface, not in space**. After the orbital objective is cleared the player lands and the game transitions to a **top-down tile world** (Terraria-style destruction, Creeper-World-style clean tiles):
+
+- **Destructible terrain:** dirt, rock, ore and fuel veins are tiles — the lander digs through them, mines resources, tunnels under defenses.
+- **Mining economy on-site:** ore funds ground construction, fuel feeds the lander/fleet. What you dig becomes what you build.
+- **Enemy ground base:** player-facing layout of destructible walls, turrets, guard drones and a warehouse core. Breach the wall or tunnel under it — both work.
+- **Player base-building:** the same tile system in reverse — place walls, auto-turrets, and later real production buildings (extractors, factories, fuel refineries) on claimed ground. The base view is a zoomable tile field; construction is drag-place on the grid, modules snap like ship blocks.
+
+Prototype v0.4 implements the first slice: landing transition, diggable terrain with ore/fuel, destructible enemy bunker with turrets + guards + loot core, and player-placed walls/turrets.
+
 ## Clans & Weekend Wars (online layer)
 
 - Campaign stays fully offline; the online layer is optional and account-based.

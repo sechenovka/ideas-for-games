@@ -1,4 +1,4 @@
-# VOID SALVAGE — prototype v0.3
+# VOID SALVAGE — prototype v0.4
 
 Game-feel prototype. No dependencies, no build step.
 
@@ -19,23 +19,40 @@ Open `index.html` in any browser (or serve the folder — sprite loading needs n
 - **Clean geometric visuals** (Creeper World direction, NOT pixel art): dark field, faint world grid, thin outlines.
 - **Per-block damage:** bullets knock out individual blocks — lose engines and you drift, lose all guns and you're toothless, lose every block and you're dead.
 - Slower combat pace, bullet tracers, engine exhaust per engine block.
+- **Asteroid field:** destructible cover between you and the station — break rocks for salvage.
+- **Planetary phase (press L after destroying the station):** top-down tile world in the Terraria/Creeper World spirit — diggable dirt/rock, ore + fuel veins, caverns. Your lander digs, mines, fights guard drones and base turrets, and cracks the lootable core. Enemy walls and your own walls are destructible; build WALL (4 ore) and TURRET (12 ore) to fortify.
 
-## Controls
+## Controls (space)
 
 | Input | Action |
 |---|---|
 | LMB on own ship | select it (Shift = add/remove) |
 | LMB on empty space | move order for all selected ships |
 | LMB on enemy | attack order for all selected ships |
+| RMB drag / wheel | pan camera / zoom |
+| F | re-center on flagship |
 | A or ALL button | select whole fleet |
 | Space or PAUSE button | pause / resume |
 | P or AUTOPILOT button | AI flies the fleet |
+| L (after win) | land on the planet |
 | R | back to shipyard (rebuild) |
+
+## Controls (planet)
+
+| Input | Action |
+|---|---|
+| LMB on open ground | move the lander |
+| LMB on solid tile (close) | dig it out |
+| LMB on enemy | lock target (auto-fire) |
+| 1 / 2 or buttons | build WALL / TURRET (ore) |
+| RMB drag / wheel | pan / zoom |
+| Space | pause |
+| R | back to shipyard |
 
 ## Loop
 
-Assemble flagship -> pick wingmen -> LAUNCH -> kill the 6 turrets -> destroy the core -> R -> rebuild -> try again.
+Assemble flagship -> pick wingmen -> LAUNCH -> kill the 6 turrets -> destroy the core -> L: land -> dig/mine/raid the ground base -> R -> rebuild with salvaged scrap -> again.
 
 ## Not in this prototype (by design)
 
-Loot/parts drops, scrap economy, campaign map, more block types (missiles, shields, hangar), landing phase. See `projects/VoidSalvage.md`.
+Campaign map, more block types (missiles, shields, hangar), ground-vehicle part variety (wheels/tracks for the lander), real factory production on the base. See `projects/VoidSalvage.md`.
