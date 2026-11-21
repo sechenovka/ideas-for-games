@@ -22,6 +22,8 @@ const TYPES = {
   turret: { cost: 3, hp: 28, color: '#2a4a5e', edge: '#7fd4ff', name: 'GUN' },
 };
 const KEYS_ORDER = ['hull', 'engine', 'turret'];
+const BP = 7; // per-block pixel grid — blocks die pixel by pixel
+const DEBRIS_COL = { hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30', turret: '#3d4f63' };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
   { name: 'SCOUT',   desc: 'fast, 1 gun',  color: '#9dff8a', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'turret']] },
@@ -56,7 +58,7 @@ let salvage = 0, debris = [], msg = null, reinforced = false;
 const budget = () => BUDGET + salvage;
 let cam = { x: 0, y: 0, zoom: 1 };   // free camera: wheel zoom, RMB/MMB drag pan, F re-center
 let dragging = false, dragLast = null;
-let asteroids = [];
+let asteroids = [], pods = [], waveT = 45;
 // ---------- planet mode ----------
 const TIL = 30, PW = 52, PH = 34;     // tile size, map dims
 // tile types: 0 air, 1 dirt, 2 rock, 3 ore, 4 fuel, 5 wall, 6 base-wall
@@ -196,7 +198,9 @@ function blocksFromGrid(g) {
       dx: (col - c) * CS, dy: (r - c) * CS, type: t,
       hp: TYPES[t].hp, maxHp: TYPES[t].hp, cd: rand(0, 0.5),
       variant: t === 'hull' ? HULL_VARIANTS[Math.floor(Math.random() * HULL_VARIANTS.length)] : t,
-      aim: 0
+      aim: 0,
+      pix: new Uint8Array(BP * BP).fill(1), pixCount: BP * BP,
+      barrels: t === 'turret' ? 2 : 0
     });
   }
   return blocks;
@@ -258,8 +262,11 @@ function launch() {
   foes[1].role = 'interceptor';
   station = {
     x: 1600, y: 0, r: 80, coreHp: 350, coreMax: 350,
-    turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true }))
+    turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true, barrels: 2 }))
   };
+  // cargo pods — shoot them open for loot
+  pods = [{ x: 300, y: -260, hp: 40 }, { x: 600, y: 420, hp: 40 }, { x: 1100, y: -80, hp: 40 }];
+  waveT = 45;
   planet = { x: 2400, y: 800, r: 420 };
   // asteroid field between spawn and the station — destructible cover
   asteroids = [];
@@ -382,7 +389,7 @@ function nearestAlly(f) {
 
 function autoFire(s, dt, forced) {
   for (const b of s.blocks) {
-    if (b.type !== 'turret') continue;
+    if (b.type !== 'turret' || b.barrels <= 0) continue;
     b.cd -= dt;
     let t = null;
     if (forced && validTarget(forced)) t = targetPoint(forced);
@@ -395,9 +402,12 @@ function autoFire(s, dt, forced) {
     const lead = (t.vx !== undefined) ? dist(p, t) / 400 : 0;
     const ax = t.x + (t.vx || 0) * lead, ay = t.y + (t.vy || 0) * lead;
     b.cd = 0.6;
-    const a = Math.atan2(ay - p.y, ax - p.x);
-    bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(a) * 400, vy: s.vy + Math.sin(a) * 400, ttl: 2.0, dmg: 11, team: s.team });
-    particles.push({ x: p.x + Math.cos(a) * 14, y: p.y + Math.sin(a) * 14, vx: rand(-20, 20), vy: rand(-20, 20), ttl: 0.12, max: 0.12, color: '#ffd27f', r: 4 });
+    // one shot per barrel — lose a barrel, lose half the dakka
+    for (let i = 0; i < b.barrels; i++) {
+      const a = Math.atan2(ay - p.y, ax - p.x) + (i === 0 ? -0.035 : 0.035);
+      bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(a) * 400, vy: s.vy + Math.sin(a) * 400, ttl: 2.0, dmg: 11, team: s.team, splash: 0 });
+    }
+    particles.push({ x: p.x + Math.cos(b.aim) * 14, y: p.y + Math.sin(b.aim) * 14, vx: rand(-20, 20), vy: rand(-20, 20), ttl: 0.12, max: 0.12, color: '#ffd27f', r: 4 });
   }
 }
 
@@ -436,21 +446,62 @@ function explode(x, y, color, n = 24) {
   }
 }
 
+// colored debris chunks — "детальки". Random shapes: single pixels, sticks, corners
+function spawnChunk(x, y, color, n) {
+  const shape = [[0, 0]];
+  while (shape.length < n) {
+    const [lx, ly] = shape[shape.length - 1];
+    const [ox, oy] = [[1, 0], [-1, 0], [0, 1], [0, -1]][Math.floor(Math.random() * 4)];
+    shape.push([lx + ox, ly + oy]);
+  }
+  debris.push({ x, y, vx: rand(-110, 110), vy: rand(-110, 110), a: rand(0, TAU), va: rand(-5, 5), v: n * 0.15, shape, color });
+}
+
 function hitShip(s, b) {
-  let blk = null, bd = CS * 0.9;
+  let blk = null, bd = CS * 0.9, bpos = null;
   for (const bl of s.blocks) {
     const p = bw(s, bl), d = Math.hypot(b.x - p.x, b.y - p.y);
-    if (d < bd) { bd = d; blk = bl; }
+    if (d < bd) { bd = d; blk = bl; bpos = p; }
   }
   if (!blk) return;
-  blk.hp -= b.dmg; b.ttl = 0;
-  explode(b.x, b.y, '#ffd27f', 5);
-  if (blk.hp <= 0) {
-    const p = bw(s, blk);
+  b.ttl = 0;
+
+  // impact point in block-local pixel coords
+  const c = Math.cos(s.angle), sn = Math.sin(s.angle);
+  const lx = (b.x - bpos.x) * c + (b.y - bpos.y) * sn;
+  const ly = -(b.x - bpos.x) * sn + (b.y - bpos.y) * c;
+  const px = (lx / CS + 0.5) * BP, py = (ly / CS + 0.5) * BP;
+  const splash = b.splash || 0;
+  const want = 3 + Math.floor(rand(0, 4)) + splash * 6;
+  const rr = 1.4 + splash;
+  let removed = 0, tries = 0;
+  const dcol = DEBRIS_COL[blk.variant || blk.type] || '#888';
+  while (removed < want && tries < 50) {
+    tries++;
+    const ax = Math.floor(px + rand(-rr, rr)), ay = Math.floor(py + rand(-rr, rr));
+    if (ax < 0 || ay < 0 || ax >= BP || ay >= BP) continue;
+    const i = ay * BP + ax;
+    if (!blk.pix[i]) continue;
+    blk.pix[i] = 0; blk.pixCount--; removed++;
+    const wx = bpos.x + ((ax / BP - 0.5) * CS) * c - ((ay / BP - 0.5) * CS) * sn;
+    const wy = bpos.y + ((ax / BP - 0.5) * CS) * sn + ((ay / BP - 0.5) * CS) * c;
+    if (removed <= 2 || Math.random() < 0.5)
+      spawnChunk(wx, wy, dcol, Math.random() < 0.65 ? 1 : (Math.random() < 0.7 ? 2 : 3));
+    else
+      particles.push({ x: wx, y: wy, vx: rand(-60, 60), vy: rand(-60, 60), ttl: 0.4, max: 0.4, color: dcol, r: 2.5 });
+  }
+
+  // smart turret damage: chance to shoot a barrel clean off
+  if (blk.type === 'turret' && blk.barrels > 0 && Math.random() < 0.16) {
+    blk.barrels--;
+    spawnChunk(bpos.x, bpos.y, '#2a3a4a', 4); // the barrel itself flies off
+    explode(bpos.x, bpos.y, '#7fd4ff', 10);
+    if (blk.barrels === 0) blk.pixCount = 0; // turret head gone — block dies
+  }
+
+  if (blk.pixCount <= 0) {
     s.blocks = s.blocks.filter(x => x !== blk);
-    explode(p.x, p.y, s.color, 14);
-    // destroyed parts drop as salvageable debris
-    debris.push({ x: p.x, y: p.y, vx: rand(-40, 40), vy: rand(-40, 40), a: rand(0, TAU), va: rand(-2, 2), v: TYPES[blk.type].cost, t: blk.type });
+    explode(bpos.x, bpos.y, s.color, 14);
     recount(s);
     if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); }
   }
@@ -508,8 +559,10 @@ function update(dt) {
       t.cd = 1.6;
       const tgt = targets[0];
       const lead = dist(pos, tgt) / 320;
-      const a = Math.atan2(tgt.y + tgt.vy * lead - pos.y, tgt.x + tgt.vx * lead - pos.x);
-      bullets.push({ x: pos.x, y: pos.y, vx: Math.cos(a) * 320, vy: Math.sin(a) * 320, ttl: 2.6, dmg: 13, team: 'foe' });
+      for (let i = 0; i < t.barrels; i++) {
+        const a = Math.atan2(tgt.y + tgt.vy * lead - pos.y, tgt.x + tgt.vx * lead - pos.x) + (i === 0 ? -0.04 : 0.04);
+        bullets.push({ x: pos.x, y: pos.y, vx: Math.cos(a) * 320, vy: Math.sin(a) * 320, ttl: 2.6, dmg: 13, team: 'foe' });
+      }
     }
   }
 
@@ -554,7 +607,21 @@ function update(dt) {
         const p = turretPos(t);
         if (Math.hypot(b.x - p.x, b.y - p.y) < 18) {
           t.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ffd27f', 6);
-          if (t.hp <= 0) { t.alive = false; explode(p.x, p.y, '#ff8a7a', 30); }
+          if (t.barrels > 0 && Math.random() < 0.12) { // barrel shot off
+            t.barrels--;
+            spawnChunk(p.x, p.y, '#3a2a30', 4);
+            if (t.barrels === 0) { t.alive = false; explode(p.x, p.y, '#ff8a7a', 30); }
+          }
+          if (t.alive && t.hp <= 0) { t.alive = false; explode(p.x, p.y, '#ff8a7a', 30); }
+        }
+      }
+      for (const pod of pods) {
+        if (pod.hp > 0 && Math.hypot(b.x - pod.x, b.y - pod.y) < 16) {
+          pod.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ffcf6e', 5);
+          if (pod.hp <= 0) {
+            pod.dead = true; explode(pod.x, pod.y, '#ffcf6e', 30);
+            for (let k = 0; k < 6; k++) spawnChunk(pod.x + rand(-14, 14), pod.y + rand(-14, 14), Math.random() < 0.5 ? '#ffcf6e' : '#5a6f8f', 2);
+          }
         }
       }
       if (station.turrets.every(t => !t.alive) && station.coreHp > 0 && Math.hypot(b.x - station.x, b.y - station.y) < station.r) {
@@ -565,6 +632,19 @@ function update(dt) {
   }
   bullets = bullets.filter(b => b.ttl > 0);
   asteroids = asteroids.filter(a => !a.dead);
+  pods = pods.filter(p => !p.dead);
+
+  // attack waves while the station lives — pressure to keep pushing
+  if (!won && station.coreHp > 0) {
+    waveT -= dt;
+    if (waveT <= 0 && foes.filter(f => f.alive).length < 8) {
+      waveT = 40;
+      const w = makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), station.x + rand(-160, 160), station.y + rand(-260, 260), 'foe', '#ff8a7a');
+      w.role = 'interceptor';
+      foes.push(w);
+      msg = { text: 'HOSTILE LAUNCHED FROM STATION', t: 3 };
+    }
+  }
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
   particles = particles.filter(p => p.ttl > 0);
@@ -673,7 +753,7 @@ function drawEditor() {
   const mass = flat.length, eng = n('engine');
   const sy = gs.y + GRID * gs.s + 30;
   ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
-  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${gridCost()}/${budget()}${salvage ? '  (+' + salvage + ' salvaged)' : ''}`, gs.x, sy);
+  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${gridCost()}/${Math.floor(budget())}${salvage ? '  (+' + salvage.toFixed(1) + ' salvaged)' : ''}`, gs.x, sy);
 
   const chk = canLaunch();
   launchBtn.x = px; launchBtn.y = sy - 34;
@@ -698,30 +778,38 @@ function drawShip(s) {
   }
   for (const b of s.blocks) {
     const p = bw(s, b), T = TYPES[b.type];
-    const fade = Math.max(0.35, b.hp / b.maxHp);
     ctx.save();
     ctx.translate(p.x, p.y); ctx.rotate(s.angle);
-    ctx.globalAlpha = fade;
     const spr = b.type === 'turret' ? SPRITES.gun_base : SPRITES[b.variant || b.type];
     if (sprReady(spr)) ctx.drawImage(spr, -CS / 2, -CS / 2, CS, CS);
     else {
       ctx.fillStyle = T.color; ctx.fillRect(-CS / 2 + 1, -CS / 2 + 1, CS - 2, CS - 2);
       ctx.strokeStyle = T.edge; ctx.strokeRect(-CS / 2 + 1, -CS / 2 + 1, CS - 2, CS - 2);
     }
-    ctx.restore();
-    // rotating barrel — world-space aim
-    if (b.type === 'turret') {
-      ctx.save();
-      ctx.translate(p.x, p.y); ctx.rotate(b.aim);
-      ctx.globalAlpha = fade;
-      if (sprReady(SPRITES.gun_barrel)) ctx.drawImage(SPRITES.gun_barrel, -CS / 2, -CS / 2, CS, CS);
-      ctx.restore();
+    // pixel damage — shot-out pixels read as real holes in the sprite
+    if (b.pix) {
+      ctx.fillStyle = '#04060b';
+      const ps = CS / BP;
+      for (let i = 0; i < BP * BP; i++) if (!b.pix[i]) {
+        ctx.fillRect((i % BP) * ps - CS / 2, Math.floor(i / BP) * ps - CS / 2, ps + 0.6, ps + 0.6);
+      }
     }
-    ctx.strokeStyle = s.color; ctx.globalAlpha = 1; ctx.lineWidth = 1;
-    ctx.save();
-    ctx.translate(p.x, p.y); ctx.rotate(s.angle);
+    ctx.strokeStyle = s.color; ctx.lineWidth = 1;
     ctx.strokeRect(-CS / 2 + 0.5, -CS / 2 + 0.5, CS - 1, CS - 1);
     ctx.restore();
+    // rotating barrels — clipped when a barrel got shot off
+    if (b.type === 'turret' && b.barrels > 0) {
+      ctx.save();
+      ctx.translate(p.x, p.y); ctx.rotate(b.aim);
+      if (sprReady(SPRITES.gun_barrel)) {
+        if (b.barrels === 2) ctx.drawImage(SPRITES.gun_barrel, -CS / 2, -CS / 2, CS, CS);
+        else {
+          ctx.beginPath(); ctx.rect(-CS / 2, -CS / 2, CS, CS * 0.62); ctx.clip();
+          ctx.drawImage(SPRITES.gun_barrel, -CS / 2, -CS / 2, CS, CS);
+        }
+      }
+      ctx.restore();
+    }
   }
 }
 
@@ -743,7 +831,7 @@ function drawOrderMarker(s) {
 function draw() {
   if (mode === 'editor') { drawEditor(); return; }
   if (mode === 'planet') { pDraw(); return; }
-  ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#080d16'; ctx.fillRect(0, 0, W, H);
   ctx.save();
   ctx.translate(W / 2, H / 2);
   ctx.scale(cam.zoom, cam.zoom);
@@ -755,7 +843,7 @@ function draw() {
   for (let x = x0; x < cam.x + vhw + step; x += step) { ctx.beginPath(); ctx.moveTo(x, cam.y - vhh); ctx.lineTo(x, cam.y + vhh); ctx.stroke(); }
   for (let y = y0; y < cam.y + vhh + step; y += step) { ctx.beginPath(); ctx.moveTo(cam.x - vhw, y); ctx.lineTo(cam.x + vhw, y); ctx.stroke(); }
 
-  ctx.fillStyle = '#3a4a66';
+  ctx.fillStyle = '#7a8ab8';
   for (const st of stars) {
     const sx = st.x + cam.x * (1 - st.d), sy = st.y + cam.y * (1 - st.d);
     ctx.globalAlpha = st.d; ctx.fillRect(sx, sy, st.s, st.s);
@@ -816,8 +904,19 @@ function draw() {
 
   for (const d of debris) {
     ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.a);
-    ctx.fillStyle = '#b06a2a'; ctx.fillRect(-5, -5, 10, 10);
-    ctx.strokeStyle = '#ffcf6e'; ctx.lineWidth = 1.5; ctx.strokeRect(-5, -5, 10, 10);
+    ctx.fillStyle = d.color || '#b06a2a';
+    for (const [dx, dy] of d.shape || [[0, 0]]) ctx.fillRect(dx * 5 - 2.5, dy * 5 - 2.5, 5, 5);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+    for (const [dx, dy] of d.shape || [[0, 0]]) ctx.strokeRect(dx * 5 - 2.5, dy * 5 - 2.5, 5, 5);
+    ctx.restore();
+  }
+
+  // cargo pods
+  for (const pod of pods) {
+    ctx.save(); ctx.translate(pod.x, pod.y); ctx.rotate(0.3);
+    ctx.fillStyle = '#3a2f1a'; ctx.strokeStyle = '#ffcf6e'; ctx.lineWidth = 2;
+    ctx.fillRect(-10, -10, 20, 20); ctx.strokeRect(-10, -10, 20, 20);
+    ctx.fillStyle = '#ffcf6e'; ctx.fillRect(-10, -3, 20, 6);
     ctx.restore();
   }
 
@@ -859,7 +958,7 @@ function draw() {
   ctx.fillStyle = '#9dff8a';
   ctx.fillText(`SELECTED ${selection.size}/${allies.filter(s => s.alive).length}`, 16, hy + 4);
   ctx.fillStyle = '#ffcf6e';
-  ctx.fillText(`SALVAGE +${salvage} (next build: ${budget()} scrap)`, 16, hy + 24);
+  ctx.fillText(`SALVAGE +${salvage.toFixed(1)} (next build: ${Math.floor(budget())} scrap)`, 16, hy + 24);
 
   const tLeft = station.turrets.filter(t => t.alive).length;
   ctx.fillStyle = '#ff8a7a'; ctx.textAlign = 'right';
@@ -1149,12 +1248,12 @@ function pUpdate(dt) {
 
 function pDraw() {
   const vhw = W / 2 / cam.zoom, vhh = H / 2 / cam.zoom;
-  ctx.fillStyle = '#0a0d14'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#0d1420'; ctx.fillRect(0, 0, W, H);
   ctx.save();
   ctx.translate(W / 2, H / 2); ctx.scale(cam.zoom, cam.zoom); ctx.translate(-cam.x, -cam.y);
 
   // sky strip above the surface
-  ctx.fillStyle = '#0e1626';
+  ctx.fillStyle = '#14233d';
   ctx.fillRect(0, -TIL * 4, PW * TIL, TIL * 12);
 
   // tiles
@@ -1171,6 +1270,17 @@ function pDraw() {
     if (t === 4) { ctx.fillStyle = '#3ae8a8'; ctx.fillRect(c * TIL + 9, r * TIL + 9, 12, 12); }
     if (t >= 5) { ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 2; ctx.strokeRect(c * TIL + 1, r * TIL + 1, TIL - 2, TIL - 2); }
     if (r + 1 < PH && ptiles[r + 1][c] !== 0) { ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(c * TIL, r * TIL + TIL - 4, TIL, 4); }
+    // pixel damage specks — chipped tiles show destroyed pixels
+    const dmgK = r * PW + c;
+    const dmgAmt = ptileDmg[dmgK] || (pdig && pdig.c === c && pdig.r === r ? TILE_HP[t] * (1 - pdig.t / pdig.max) : 0);
+    if (dmgAmt) {
+      const ns = Math.min(16, Math.ceil(dmgAmt / TILE_HP[t] * 16));
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      for (let i = 0; i < ns; i++) {
+        const sx = ((c * 13 + i * 7) % (TIL - 6)) + 3, sy = ((r * 11 + i * 5) % (TIL - 6)) + 3;
+        ctx.fillRect(c * TIL + sx, r * TIL + sy, 4, 4);
+      }
+    }
   }
 
   // enemy base turrets (Blender sprites, barrels track rover)
