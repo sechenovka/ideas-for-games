@@ -1,6 +1,7 @@
-// VOID SALVAGE — prototype v0.2
-// Block-grid ship assembly + mouse-order controls. Creeper World-style clean geometric look.
-// Editor: place blocks -> LAUNCH -> fight station -> R back to editor.
+// VOID SALVAGE — prototype v0.3
+// Block-grid ship assembly + fleet selection + squad orders + pause.
+// Blender-rendered sprites; turrets are two-layer (base + rotating barrel).
+// Editor: place blocks -> pick up to 2 wingmen -> LAUNCH -> raid the station.
 (() => {
 'use strict';
 
@@ -11,53 +12,76 @@ addEventListener('resize', () => { W = canvas.width = innerWidth; H = canvas.hei
 
 // ---------- constants ----------
 const TAU = Math.PI * 2;
-const CS = 24;              // world cell size
+const CS = 26;              // world cell size
 const GRID = 9;             // editor grid GRID x GRID
 const BUDGET = 16;          // scrap points for the editor
+const MAX_WING = 2;         // max escort ships you can bring
 const TYPES = {
   hull:   { cost: 1, hp: 45, color: '#4a6a9a', edge: '#6e92c8', name: 'HULL' },
   engine: { cost: 2, hp: 30, color: '#7a4a2a', edge: '#ff9d5c', name: 'ENGINE' },
   turret: { cost: 3, hp: 28, color: '#2a4a5e', edge: '#7fd4ff', name: 'GUN' },
 };
 const KEYS_ORDER = ['hull', 'engine', 'turret'];
+// escort roster — pick up to MAX_WING
+const ROSTER = [
+  { name: 'SCOUT',   desc: 'fast, 1 gun',  color: '#9dff8a', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'turret']] },
+  { name: 'GUNSHIP', desc: '2 guns',       color: '#7fd4ff', g: [[4,3,'engine'],[4,4,'hull'],[3,4,'hull'],[5,4,'hull'],[4,5,'turret'],[3,5,'turret']] },
+  { name: 'BULWARK', desc: 'armored',      color: '#ffcf6e', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[5,5,'hull'],[4,6,'hull']] },
+];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'engine', 'gun', 'turret_st']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
 }
-const spriteOf = t => t === 'turret' ? SPRITES.gun : SPRITES[t];
+const HULL_VARIANTS = ['hull', 'hull_b', 'hull_c'];
+const sprReady = s => s && s.complete && s.naturalWidth;
 
 // ---------- helpers ----------
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const angTo = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
+const angleTo = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
 const angDiff = (a, b) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
 const rand = (a, b) => a + Math.random() * (b - a);
 
 // ---------- state ----------
 let mode = 'editor'; // 'editor' | 'flight'
 let grid, selected = 'hull';
-let player, escort, foes, station, bullets, particles, stars, planet;
-let moveTarget = null, attackTarget = null;
-let autopilot = false, won = false, dead = false, time = 0;
-const autoBtn = { x: 0, y: 0, w: 150, h: 38 };
+let allies = [], foes, station, bullets, particles, stars, planet;
+const selection = new Set(); // ally ships under command
+let rosterSel = new Set();   // chosen escort indices
+let paused = false, autopilot = false, won = false, dead = false, time = 0;
+const autoBtn  = { x: 0, y: 0, w: 150, h: 38 };
+const pauseBtn = { x: 0, y: 0, w: 120, h: 38 };
+const allBtn   = { x: 0, y: 0, w: 140, h: 38 };
 const launchBtn = { x: 0, y: 0, w: 170, h: 46 };
-const palette = {}; // key -> rect
+const palette = {};   // part key -> rect
+const rosterRects = []; // i -> rect
+
+const flagship = () => allies[0];
+const camShip = () => allies.find(s => s.alive) || { x: 0, y: 0 };
 
 // ---------- input ----------
 addEventListener('keydown', e => {
-  if (e.code === 'KeyP' && mode === 'flight') autopilot = !autopilot;
-  if (e.code === 'KeyR' && mode === 'flight') mode = 'editor';
-  if (e.code === 'Space') e.preventDefault();
+  if (mode !== 'flight') return;
+  if (e.code === 'KeyP') autopilot = !autopilot;
+  if (e.code === 'KeyA') selectAll();
+  if (e.code === 'KeyR') mode = 'editor';
+  if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
 });
 addEventListener('mousedown', e => {
-  if (e.button !== 0 && e.button !== 2) return;
-  if (mode === 'editor') editorClick(e.clientX, e.clientY, e.button);
-  else flightClick(e.clientX, e.clientY);
+  if (e.button !== 0) return;
+  if (mode === 'editor') editorClick(e.clientX, e.clientY);
+  else flightClick(e.clientX, e.clientY, e.shiftKey);
 });
 addEventListener('contextmenu', e => e.preventDefault());
+
+function selectAll() {
+  selection.clear();
+  for (const s of allies) if (s.alive) selection.add(s);
+}
+const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
 // ---------- editor ----------
 function starterGrid() {
@@ -81,32 +105,32 @@ function hasNeighbor(r, c) {
   return false;
 }
 
-function gridScreen() { // editor grid rect
+function gridScreen() {
   const s = Math.min(46, Math.floor(Math.min(W, H) * 0.72 / GRID));
-  return { x: W * 0.36 - s * GRID / 2, y: H / 2 - s * GRID / 2, s };
+  return { x: W * 0.34 - s * GRID / 2, y: H / 2 - s * GRID / 2, s };
 }
 
-function editorClick(mx, my, btn) {
-  // palette buttons
+function editorClick(mx, my) {
   for (const k of KEYS_ORDER) {
     const r = palette[k];
-    if (r && mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) { selected = k; return; }
+    if (r && inRect(r, mx, my)) { selected = k; return; }
   }
-  // launch
-  if (mx >= launchBtn.x && mx <= launchBtn.x + launchBtn.w && my >= launchBtn.y && my <= launchBtn.y + launchBtn.h) {
-    if (canLaunch().ok) launch();
-    return;
+  for (let i = 0; i < ROSTER.length; i++) {
+    const r = rosterRects[i];
+    if (r && inRect(r, mx, my)) {
+      if (rosterSel.has(i)) rosterSel.delete(i);
+      else if (rosterSel.size < MAX_WING) rosterSel.add(i);
+      return;
+    }
   }
-  // grid
+  if (inRect(launchBtn, mx, my)) { if (canLaunch().ok) launch(); return; }
   const gs = gridScreen();
   const c = Math.floor((mx - gs.x) / gs.s), r = Math.floor((my - gs.y) / gs.s);
   if (c < 0 || c >= GRID || r < 0 || r >= GRID) return;
-  if (grid[r][c]) { // remove (refund), keep at least 1 block
-    const left = grid.flat().filter(Boolean).length;
-    if (left > 1) grid[r][c] = null;
+  if (grid[r][c]) {
+    if (grid.flat().filter(Boolean).length > 1) grid[r][c] = null;
     return;
   }
-  if (btn === 2) return;
   if (!hasNeighbor(r, c)) return;
   if (gridCost() + TYPES[selected].cost > BUDGET) return;
   grid[r][c] = selected;
@@ -126,7 +150,12 @@ function blocksFromGrid(g) {
   const blocks = [], c = (GRID - 1) / 2;
   for (let r = 0; r < GRID; r++) for (let col = 0; col < GRID; col++) {
     const t = g[r][col];
-    if (t) blocks.push({ dx: (col - c) * CS, dy: (r - c) * CS, type: t, hp: TYPES[t].hp, maxHp: TYPES[t].hp, cd: rand(0, 0.4) });
+    if (t) blocks.push({
+      dx: (col - c) * CS, dy: (r - c) * CS, type: t,
+      hp: TYPES[t].hp, maxHp: TYPES[t].hp, cd: rand(0, 0.5),
+      variant: t === 'hull' ? HULL_VARIANTS[Math.floor(Math.random() * HULL_VARIANTS.length)] : t,
+      aim: 0
+    });
   }
   return blocks;
 }
@@ -140,22 +169,23 @@ function gridFromList(list) {
 function recount(s) {
   const eng = s.blocks.filter(b => b.type === 'engine').length;
   const mass = Math.max(1, s.blocks.length);
-  s.thrust = eng * 400 / (mass * 0.5);
-  s.turn = Math.max(1.3, 3.6 - mass * 0.1);
+  s.thrust = eng * 220 / (mass * 0.5);
+  s.turn = Math.max(1.0, 2.4 - mass * 0.08);
 }
 
 function makeShip(g, x, y, team, color, o = {}) {
   const s = {
     x, y, vx: 0, vy: 0, angle: o.angle ?? 0, va: 0,
     blocks: blocksFromGrid(g), team, color,
-    thrust: 0, turn: 0, radius: 0, alive: true
+    thrust: 0, turn: 0, radius: 0, alive: true,
+    order: null, thrusting: false
   };
   recount(s);
   s.radius = Math.max(...s.blocks.map(b => Math.hypot(b.dx, b.dy))) + CS * 0.7;
   return s;
 }
 
-function bw(s, b) { // block world pos
+function bw(s, b) {
   const c = Math.cos(s.angle), sn = Math.sin(s.angle);
   return { x: s.x + b.dx * c - b.dy * sn, y: s.y + b.dx * sn + b.dy * c };
 }
@@ -163,133 +193,170 @@ function bw(s, b) { // block world pos
 // ---------- flight setup ----------
 function launch() {
   mode = 'flight';
-  autopilot = false; won = false; dead = false; time = 0;
-  moveTarget = null; attackTarget = null;
-  player = makeShip(grid, -900, 0, 'ally', '#7fd4ff');
-  escort = makeShip(gridFromList([[4, 3, 'engine'], [4, 4, 'hull'], [4, 5, 'turret']]), -1000, 120, 'ally', '#9dff8a');
+  autopilot = false; paused = false; won = false; dead = false; time = 0;
+  const flag = makeShip(grid, -900, 0, 'ally', '#7fd4ff');
+  allies = [flag];
+  let i = 0;
+  for (const idx of rosterSel) {
+    const r = ROSTER[idx];
+    const w = makeShip(gridFromList(r.g), -1000 - i * 90, 140 + i * 110, 'ally', r.color);
+    w.order = { kind: 'follow', t: flag, slot: i + 1 };
+    allies.push(w); i++;
+  }
+  selectAll();
   foes = [
-    makeShip(gridFromList([[4, 3, 'engine'], [4, 4, 'hull'], [4, 5, 'turret']]), 1400, -420, 'foe', '#ff8a7a'),
-    makeShip(gridFromList([[4, 3, 'engine'], [4, 4, 'hull'], [4, 5, 'turret'], [5, 4, 'hull']]), 1600, 420, 'foe', '#ff8a7a'),
-    makeShip(gridFromList([[4, 2, 'engine'], [4, 3, 'hull'], [4, 4, 'hull'], [4, 5, 'turret'], [3, 4, 'hull'], [5, 4, 'hull'], [3, 5, 'turret'], [5, 5, 'turret']]), 2000, -260, 'foe', '#ffb36e')
+    makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret']]), 1300, -400, 'foe', '#ff8a7a'),
+    makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 1500, 400, 'foe', '#ff8a7a'),
+    makeShip(gridFromList([[4,2,'engine'],[4,3,'hull'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[3,5,'turret'],[5,5,'turret']]), 1900, -260, 'foe', '#ffb36e')
   ];
   station = {
     x: 2400, y: 0, r: 80, coreHp: 350, coreMax: 350,
-    turrets: [0, 1, 2, 3, 4, 5].map(i => ({ a: i / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true }))
+    turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true }))
   };
   planet = { x: 3100, y: 800, r: 420 };
   bullets = []; particles = [];
   stars = [];
-  for (let i = 0; i < 500; i++)
+  for (let j = 0; j < 500; j++)
     stars.push({ x: rand(-2500, 5000), y: rand(-2500, 2500), s: rand(0.4, 1.8), d: rand(0.2, 0.9) });
 }
 
 function turretPos(t) {
-  return { x: station.x + Math.cos(t.a) * (station.r + 14), y: station.y + Math.sin(t.a) * (station.r + 14) };
+  return { x: station.x + Math.cos(t.a) * (station.r + 16), y: station.y + Math.sin(t.a) * (station.r + 16) };
 }
 
 function screenToWorld(mx, my, cam) {
   return { x: mx - W / 2 + cam.x, y: my - H / 2 + cam.y };
 }
 
-function flightClick(mx, my) {
-  // autopilot button
-  if (mx >= autoBtn.x && mx <= autoBtn.x + autoBtn.w && my >= autoBtn.y && my <= autoBtn.y + autoBtn.h) {
-    autopilot = !autopilot; return;
-  }
-  const cam = player.alive ? player : escort;
+function validTarget(t) {
+  if (!t) return false;
+  if (t === station) return station.coreHp > 0 && station.turrets.every(x => !x.alive);
+  return t.alive !== false && (t.hp === undefined || t.hp > 0);
+}
+const targetPoint = t => t === station ? station : (t.a !== undefined ? turretPos(t) : t);
+
+function flightClick(mx, my, shift) {
+  if (inRect(autoBtn, mx, my)) { autopilot = !autopilot; return; }
+  if (inRect(pauseBtn, mx, my)) { paused = !paused; return; }
+  if (inRect(allBtn, mx, my)) { selectAll(); return; }
+  const cam = camShip();
   const p = screenToWorld(mx, my, cam);
-  // click on hostile -> attack target; else move target
-  attackTarget = null;
-  for (const t of station.turrets) {
-    if (t.alive && dist(p, turretPos(t)) < 26) { attackTarget = t; return; }
+
+  // click own ship -> select it (shift adds to selection)
+  for (const s of allies) {
+    if (s.alive && dist(p, s) < s.radius + 10) {
+      if (shift) { selection.has(s) ? selection.delete(s) : selection.add(s); }
+      else { selection.clear(); selection.add(s); }
+      if (!selection.size) selection.add(s);
+      return;
+    }
   }
-  for (const f of foes) {
-    if (f.alive && dist(p, f) < f.radius + 14) { attackTarget = f; return; }
+  if (!selection.size) return;
+
+  // click hostile -> attack order for all selected
+  let tgt = null;
+  for (const t of station.turrets)
+    if (t.alive && dist(p, turretPos(t)) < 28) { tgt = t; break; }
+  if (!tgt) for (const f of foes)
+    if (f.alive && dist(p, f) < f.radius + 16) { tgt = f; break; }
+  if (!tgt && validTarget(station) && dist(p, station) < station.r + 16) tgt = station;
+
+  if (tgt) {
+    for (const s of selection) s.order = { kind: 'attack', t: tgt };
+    return;
   }
-  if (station.turrets.every(t => !t.alive) && station.coreHp > 0 && dist(p, station) < station.r + 14) {
-    attackTarget = station; return;
+  // move order — spread ships around the click point
+  let i = 0;
+  for (const s of selection) {
+    const a = i / Math.max(1, selection.size) * TAU;
+    const r = selection.size > 1 ? 70 : 0;
+    s.order = { kind: 'move', x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r };
+    i++;
   }
-  moveTarget = p;
 }
 
 // ---------- flight logic ----------
 function steerTo(s, pt, dt, hold) {
-  const dA = angDiff(s.angle, angTo(s, pt));
+  const dA = angDiff(s.angle, angleTo(s, pt));
   s.va += (Math.sign(dA) * s.turn - s.va * 3) * dt;
   const d = dist(s, pt);
   if (Math.abs(dA) < 1.0 && d > hold) {
     s.vx += Math.cos(s.angle) * s.thrust * dt;
     s.vy += Math.sin(s.angle) * s.thrust * dt;
-    return true; // thrusting
+    return true;
   }
   if (d < hold + 60) { s.vx *= (1 - 1.1 * dt); s.vy *= (1 - 1.1 * dt); }
   return false;
+}
+
+function followPoint(s) {
+  const t = s.order.t, k = s.order.slot || 1;
+  const a = t.angle + Math.PI + (k % 2 ? 1 : -1) * 0.6 * Math.ceil(k / 2);
+  return { x: t.x + Math.cos(a) * 150, y: t.y + Math.sin(a) * 150 };
 }
 
 function nearestFoe(s) {
   let best = null, bd = 620;
   for (const f of foes) if (f.alive) { const d = dist(s, f); if (d < bd) { bd = d; best = f; } }
   for (const t of station.turrets) if (t.alive) { const d = dist(s, turretPos(t)); if (d < bd) { bd = d; best = turretPos(t); } }
-  if (!best && station.turrets.every(t => !t.alive) && station.coreHp > 0) {
-    if (dist(s, station) < 700) best = station;
-  }
+  if (!best && station.turrets.every(t => !t.alive) && station.coreHp > 0 && dist(s, station) < 700) best = station;
   return best;
 }
 
 function nearestAlly(f) {
   let best = null, bd = 1e9;
-  for (const s of [player, escort]) if (s.alive) { const d = dist(f, s); if (d < bd) { bd = d; best = s; } }
+  for (const s of allies) if (s.alive) { const d = dist(f, s); if (d < bd) { bd = d; best = s; } }
   return best;
 }
 
 function autoFire(s, dt, forced) {
   for (const b of s.blocks) {
     if (b.type !== 'turret') continue;
-    b.cd -= dt; if (b.cd > 0) continue;
+    b.cd -= dt;
     let t = null;
-    if (forced && forced.alive !== false && (forced.hp === undefined || forced.hp > 0))
-      t = forced.a !== undefined ? turretPos(forced) : forced;
-    if (forced === station && station.turrets.some(x => x.alive)) t = null;
+    if (forced && validTarget(forced)) t = targetPoint(forced);
     if (!t) t = s.team === 'ally' ? nearestFoe(s) : nearestAlly(s);
-    if (!t) continue;
+    if (!t) { b.aim = s.angle; continue; }
     const p = bw(s, b);
-    const d = dist(p, t);
-    if (d > 640) continue;
-    const lead = (t.vx !== undefined) ? d / 640 : 0;
+    b.aim = Math.atan2(t.y - p.y, t.x - p.x); // barrel tracks target
+    if (b.cd > 0) continue;
+    if (dist(p, t) > 640) continue;
+    const lead = (t.vx !== undefined) ? dist(p, t) / 400 : 0;
     const ax = t.x + (t.vx || 0) * lead, ay = t.y + (t.vy || 0) * lead;
-    b.cd = 0.55;
-    const sp = 640, a = Math.atan2(ay - p.y, ax - p.x);
-    bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(a) * sp, vy: s.vy + Math.sin(a) * sp, ttl: 1.6, dmg: 11, team: s.team });
-    particles.push({ x: p.x, y: p.y, vx: rand(-20, 20), vy: rand(-20, 20), ttl: 0.12, max: 0.12, color: '#ffd27f', r: 3 });
+    b.cd = 0.6;
+    const a = Math.atan2(ay - p.y, ax - p.x);
+    bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(a) * 400, vy: s.vy + Math.sin(a) * 400, ttl: 2.0, dmg: 11, team: s.team });
+    particles.push({ x: p.x + Math.cos(a) * 14, y: p.y + Math.sin(a) * 14, vx: rand(-20, 20), vy: rand(-20, 20), ttl: 0.12, max: 0.12, color: '#ffd27f', r: 4 });
   }
 }
 
-function foeBrain(f, dt) {
-  const t = nearestAlly(f);
-  if (!t) return;
-  steerTo(f, t, dt, 300);
+function shipBrain(s, dt) {
+  const o = s.order;
+  let thrusting = false;
+  if (o && o.kind === 'attack' && validTarget(o.t)) {
+    thrusting = steerTo(s, targetPoint(o.t), dt, 380) || thrusting;
+  } else if (o && o.kind === 'move') {
+    thrusting = steerTo(s, o, dt, 30);
+    if (dist(s, o) < 40) s.order = null;
+  } else if (o && o.kind === 'follow' && o.t.alive) {
+    thrusting = steerTo(s, followPoint(s), dt, 60);
+  }
+  s.thrusting = thrusting;
 }
 
-function escortBrain(dt) {
-  const near = nearestFoe(escort);
-  if (near && dist(escort, player) < 1500) steerTo(escort, near, dt, 280);
-  else if (dist(escort, player) > 260) steerTo(escort, player, dt, 140);
-}
-
-function playerBrain(dt) { // autopilot
-  const t = nearestFoe(player);
-  if (t) steerTo(player, t, dt, 340);
+function allyBrain(s, dt) { // autopilot / unselected fallback? — used when autopilot on
+  const t = nearestFoe(s);
+  if (t) steerTo(s, t === station ? station : t, dt, 340);
 }
 
 function explode(x, y, color, n = 24) {
   for (let i = 0; i < n; i++) {
-    const a = rand(0, TAU), sp = rand(40, 280);
+    const a = rand(0, TAU), sp = rand(40, 240);
     particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, ttl: rand(0.3, 0.9), max: 0.9, color, r: rand(1.5, 3.5) });
   }
 }
 
 function hitShip(s, b) {
-  // find nearest alive block to impact
   let blk = null, bd = CS * 0.9;
   for (const bl of s.blocks) {
     const p = bw(s, bl), d = Math.hypot(b.x - p.x, b.y - p.y);
@@ -303,81 +370,66 @@ function hitShip(s, b) {
     s.blocks = s.blocks.filter(x => x !== blk);
     explode(p.x, p.y, s.color, 14);
     recount(s);
-    if (!s.blocks.length) { s.alive = false; explode(s.x, s.y, s.color, 50); }
+    if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); }
   }
 }
 
 function update(dt) {
   time += dt;
 
-  // player: orders or autopilot
-  if (player.alive) {
-    if (autopilot) playerBrain(dt);
-    else {
-      if (attackTarget && attackTarget.alive !== false && (attackTarget.hp === undefined || attackTarget.hp > 0)) {
-        steerTo(player, attackTarget === station ? station : (attackTarget.a !== undefined ? turretPos(attackTarget) : attackTarget), dt, 380);
-      } else attackTarget = null;
-      if (!attackTarget && moveTarget) {
-        steerTo(player, moveTarget, dt, 30);
-        if (dist(player, moveTarget) < 36) moveTarget = null;
+  for (const s of allies) {
+    if (!s.alive) continue;
+    if (autopilot) { allyBrain(s, dt); s.thrusting = true; }
+    else shipBrain(s, dt);
+    s.angle += s.va * dt;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    if (s.thrusting)
+      for (const b of s.blocks) if (b.type === 'engine') {
+        const p = bw(s, b);
+        particles.push({ x: p.x - Math.cos(s.angle) * CS * 0.7, y: p.y - Math.sin(s.angle) * CS * 0.7, vx: -Math.cos(s.angle) * 60 + rand(-15, 15), vy: -Math.sin(s.angle) * 60 + rand(-15, 15), ttl: 0.3, max: 0.3, color: '#ff9d5c', r: 3 });
       }
-    }
-    player.angle += player.va * dt;
-    player.x += player.vx * dt; player.y += player.vy * dt;
-    const thrusting = autopilot || (attackTarget || moveTarget);
-    if (thrusting)
-      particles.push({ x: player.x - Math.cos(player.angle) * player.radius * 0.6, y: player.y - Math.sin(player.angle) * player.radius * 0.6, vx: rand(-20, 20) - player.vx * 0.2, vy: rand(-20, 20) - player.vy * 0.2, ttl: 0.25, max: 0.25, color: '#ff9d5c', r: 2.5 });
-    autoFire(player, dt, attackTarget);
-  }
-
-  if (escort.alive) {
-    escortBrain(dt);
-    escort.angle += escort.va * dt;
-    escort.x += escort.vx * dt; escort.y += escort.vy * dt;
-    autoFire(escort, dt, null);
+    autoFire(s, dt, s.order && s.order.kind === 'attack' ? s.order.t : null);
   }
 
   for (const f of foes) {
     if (!f.alive) continue;
-    foeBrain(f, dt);
+    const t = nearestAlly(f);
+    if (t) f.thrusting = steerTo(f, t, dt, 300);
     f.angle += f.va * dt;
     f.x += f.vx * dt; f.y += f.vy * dt;
     autoFire(f, dt, null);
   }
 
-  // station turrets
   for (const t of station.turrets) {
     if (!t.alive) continue;
     t.cd -= dt;
     const pos = turretPos(t);
-    const targets = [player, escort].filter(s => s.alive && dist(pos, s) < 750);
+    const targets = allies.filter(s => s.alive && dist(pos, s) < 750);
     if (targets.length && t.cd <= 0) {
-      t.cd = 1.3;
+      t.cd = 1.6;
       const tgt = targets[0];
-      const lead = dist(pos, tgt) / 480;
+      const lead = dist(pos, tgt) / 320;
       const a = Math.atan2(tgt.y + tgt.vy * lead - pos.y, tgt.x + tgt.vx * lead - pos.x);
-      bullets.push({ x: pos.x, y: pos.y, vx: Math.cos(a) * 480, vy: Math.sin(a) * 480, ttl: 2, dmg: 13, team: 'foe' });
+      bullets.push({ x: pos.x, y: pos.y, vx: Math.cos(a) * 320, vy: Math.sin(a) * 320, ttl: 2.6, dmg: 13, team: 'foe' });
     }
   }
 
-  // bullets
   for (const b of bullets) {
     b.x += b.vx * dt; b.y += b.vy * dt; b.ttl -= dt;
     if (b.ttl <= 0) continue;
     if (b.team === 'foe') {
-      for (const s of [player, escort]) if (s.alive && dist(b, s) < s.radius + 20) hitShip(s, b);
+      for (const s of allies) if (s.alive && dist(b, s) < s.radius + 20) hitShip(s, b);
     } else {
       for (const f of foes) if (f.alive && dist(b, f) < f.radius + 20) hitShip(f, b);
       for (const t of station.turrets) {
         if (!t.alive) continue;
         const p = turretPos(t);
-        if (Math.hypot(b.x - p.x, b.y - p.y) < 16) {
+        if (Math.hypot(b.x - p.x, b.y - p.y) < 18) {
           t.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ffd27f', 6);
           if (t.hp <= 0) { t.alive = false; explode(p.x, p.y, '#ff8a7a', 30); }
         }
       }
-      const shielded = station.turrets.some(t => t.alive);
-      if (!shielded && station.coreHp > 0 && Math.hypot(b.x - station.x, b.y - station.y) < station.r) {
+      if (station.turrets.every(t => !t.alive) && station.coreHp > 0 && Math.hypot(b.x - station.x, b.y - station.y) < station.r) {
         station.coreHp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#c8a2ff', 8);
         if (station.coreHp <= 0) { won = true; explode(station.x, station.y, '#ffffff', 90); }
       }
@@ -388,7 +440,8 @@ function update(dt) {
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
   particles = particles.filter(p => p.ttl > 0);
 
-  if (!player.alive) dead = true;
+  if (!allies.some(s => s.alive)) dead = true;
+  else if (!allies[0].alive) dead = true; // flagship lost = mission failed
 }
 
 // ---------- draw: editor ----------
@@ -401,22 +454,24 @@ function drawEditor() {
   ctx.fillStyle = '#5a6a8a'; ctx.font = '13px monospace';
   ctx.fillText('click palette, click grid to place  •  click a block to remove  •  blocks must touch', gs.x, gs.y - 24);
 
-  // grid
   for (let r = 0; r < GRID; r++) for (let c = 0; c < GRID; c++) {
     const x = gs.x + c * gs.s, y = gs.y + r * gs.s;
     const t = grid[r][c];
     ctx.fillStyle = '#0b1220';
     ctx.fillRect(x + 1, y + 1, gs.s - 2, gs.s - 2);
-    const spr = t ? spriteOf(t) : null;
-    if (spr && spr.complete && spr.naturalWidth) ctx.drawImage(spr, x + 1, y + 1, gs.s - 2, gs.s - 2);
-    else if (t) { ctx.fillStyle = TYPES[t].color; ctx.fillRect(x + 1, y + 1, gs.s - 2, gs.s - 2); }
+    if (t) {
+      const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
+      if (sprReady(spr)) ctx.drawImage(spr, x + 1, y + 1, gs.s - 2, gs.s - 2);
+      else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(x + 1, y + 1, gs.s - 2, gs.s - 2); }
+      if (t === 'turret' && sprReady(SPRITES.gun_barrel)) ctx.drawImage(SPRITES.gun_barrel, x + 1, y + 1, gs.s - 2, gs.s - 2);
+    }
     ctx.strokeStyle = t ? TYPES[t].edge : '#1a2438';
     ctx.lineWidth = t ? 2 : 1;
     ctx.strokeRect(x + 1, y + 1, gs.s - 2, gs.s - 2);
   }
 
   // palette
-  const px = W * 0.72, pw = 150;
+  const px = W * 0.66, pw = 150;
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
   ctx.fillText('PARTS', px, gs.y - 10);
   KEYS_ORDER.forEach((k, i) => {
@@ -427,12 +482,37 @@ function drawEditor() {
     ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeStyle = sel ? T.edge : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = T.color; ctx.fillRect(r.x + 10, r.y + 14, 24, 24);
-    ctx.strokeStyle = T.edge; ctx.strokeRect(r.x + 10, r.y + 14, 24, 24);
+    const spr = k === 'turret' ? SPRITES.gun_base : SPRITES[k];
+    if (sprReady(spr)) ctx.drawImage(spr, r.x + 8, r.y + 11, 32, 32);
+    else { ctx.fillStyle = T.color; ctx.fillRect(r.x + 10, r.y + 14, 24, 24); }
     ctx.fillStyle = T.edge; ctx.font = 'bold 13px monospace';
-    ctx.fillText(`${T.name}`, r.x + 44, r.y + 26);
+    ctx.fillText(T.name, r.x + 46, r.y + 26);
     ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-    ctx.fillText(`${T.cost} scrap`, r.x + 44, r.y + 44);
+    ctx.fillText(`${T.cost} scrap`, r.x + 46, r.y + 44);
+  });
+
+  // wingmen roster
+  const ry0 = gs.y + KEYS_ORDER.length * 64 + 30;
+  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
+  ctx.fillText(`FLEET  (${rosterSel.size}/${MAX_WING})`, px, ry0 - 10);
+  ROSTER.forEach((r, i) => {
+    const rc = { x: px, y: ry0 + i * 76, w: pw + 60, h: 66 };
+    rosterRects[i] = rc;
+    const sel = rosterSel.has(i);
+    ctx.fillStyle = sel ? '#14261c' : '#0b1220';
+    ctx.fillRect(rc.x, rc.y, rc.w, rc.h);
+    ctx.strokeStyle = sel ? '#9dff8a' : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
+    // mini layout preview
+    for (const [rr, cc, t] of r.g) {
+      const mx = rc.x + 8 + (cc - 1) * 11, my = rc.y + 10 + (rr - 2) * 11;
+      ctx.fillStyle = TYPES[t].color;
+      ctx.fillRect(mx, my, 9, 9);
+    }
+    ctx.fillStyle = sel ? '#9dff8a' : '#8aa0c8'; ctx.font = 'bold 13px monospace';
+    ctx.fillText(r.name, rc.x + 60, rc.y + 26);
+    ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
+    ctx.fillText(r.desc, rc.x + 60, rc.y + 44);
   });
 
   // stats
@@ -441,9 +521,8 @@ function drawEditor() {
   const mass = flat.length, eng = n('engine');
   const sy = gs.y + GRID * gs.s + 30;
   ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
-  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 400 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${gridCost()}/${BUDGET}`, gs.x, sy);
+  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${gridCost()}/${BUDGET}`, gs.x, sy);
 
-  // launch button
   const chk = canLaunch();
   launchBtn.x = px; launchBtn.y = sy - 34;
   ctx.fillStyle = chk.ok ? '#1d3a24' : '#141c2e';
@@ -458,35 +537,64 @@ function drawEditor() {
 
 // ---------- draw: flight ----------
 function drawShip(s) {
+  // selection ring
+  if (selection.has(s)) {
+    ctx.strokeStyle = 'rgba(157,255,138,0.7)'; ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.radius + 6, 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+  }
   for (const b of s.blocks) {
     const p = bw(s, b), T = TYPES[b.type];
     const fade = Math.max(0.35, b.hp / b.maxHp);
     ctx.save();
     ctx.translate(p.x, p.y); ctx.rotate(s.angle);
     ctx.globalAlpha = fade;
-    const spr = spriteOf(b.type);
-    if (spr && spr.complete && spr.naturalWidth)
-      ctx.drawImage(spr, -CS / 2, -CS / 2, CS, CS);
-    else { // fallback while sprites load
+    const spr = b.type === 'turret' ? SPRITES.gun_base : SPRITES[b.variant || b.type];
+    if (sprReady(spr)) ctx.drawImage(spr, -CS / 2, -CS / 2, CS, CS);
+    else {
       ctx.fillStyle = T.color; ctx.fillRect(-CS / 2 + 1, -CS / 2 + 1, CS - 2, CS - 2);
       ctx.strokeStyle = T.edge; ctx.strokeRect(-CS / 2 + 1, -CS / 2 + 1, CS - 2, CS - 2);
     }
-    ctx.globalAlpha = 1;
-    // team color trim
-    ctx.strokeStyle = s.color; ctx.lineWidth = 1;
+    ctx.restore();
+    // rotating barrel — world-space aim
+    if (b.type === 'turret') {
+      ctx.save();
+      ctx.translate(p.x, p.y); ctx.rotate(b.aim);
+      ctx.globalAlpha = fade;
+      if (sprReady(SPRITES.gun_barrel)) ctx.drawImage(SPRITES.gun_barrel, -CS / 2, -CS / 2, CS, CS);
+      ctx.restore();
+    }
+    ctx.strokeStyle = s.color; ctx.globalAlpha = 1; ctx.lineWidth = 1;
+    ctx.save();
+    ctx.translate(p.x, p.y); ctx.rotate(s.angle);
     ctx.strokeRect(-CS / 2 + 0.5, -CS / 2 + 0.5, CS - 1, CS - 1);
     ctx.restore();
   }
 }
 
+function drawOrderMarker(s) {
+  const o = s.order;
+  if (!o) return;
+  if (o.kind === 'move') {
+    ctx.strokeStyle = 'rgba(127,212,255,0.8)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(o.x, o.y, 10 + 3 * Math.sin(time * 5), 0, TAU); ctx.stroke();
+    ctx.strokeStyle = 'rgba(127,212,255,0.15)';
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(o.x, o.y); ctx.stroke();
+  } else if (o.kind === 'attack' && validTarget(o.t)) {
+    const tp = targetPoint(o.t);
+    ctx.strokeStyle = '#ff6e5c'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(tp.x, tp.y, 20 + 4 * Math.sin(time * 7), 0, TAU); ctx.stroke();
+  }
+}
+
 function draw() {
   if (mode === 'editor') { drawEditor(); return; }
-  const cam = player.alive ? player : escort;
+  const cam = camShip();
   ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
   ctx.save();
   ctx.translate(W / 2 - cam.x, H / 2 - cam.y);
 
-  // faint world grid (Creeper World vibe)
   ctx.strokeStyle = 'rgba(40,60,100,0.16)'; ctx.lineWidth = 1;
   const step = 90, x0 = Math.floor((cam.x - W / 2) / step) * step, y0 = Math.floor((cam.y - H / 2) / step) * step;
   for (let x = x0; x < cam.x + W / 2 + step; x += step) { ctx.beginPath(); ctx.moveTo(x, cam.y - H / 2); ctx.lineTo(x, cam.y + H / 2); ctx.stroke(); }
@@ -519,38 +627,32 @@ function draw() {
   for (const t of station.turrets) {
     if (!t.alive) continue;
     const p = turretPos(t);
-    // aim barrel at nearest ally
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    if (sprReady(SPRITES.st_base)) ctx.drawImage(SPRITES.st_base, -20, -20, 40, 40);
+    else { ctx.fillStyle = '#5e2a2a'; ctx.beginPath(); ctx.arc(0, 0, 14, 0, TAU); ctx.fill(); }
+    ctx.restore();
     let aimA = t.a;
-    const tg = [player, escort].filter(s => s.alive).sort((a, b) => dist(p, a) - dist(p, b))[0];
-    if (tg) aimA = angTo(p, tg);
+    const tg = allies.filter(s => s.alive).sort((a, b) => dist(p, a) - dist(p, b))[0];
+    if (tg) aimA = angleTo(p, tg);
     ctx.save();
     ctx.translate(p.x, p.y); ctx.rotate(aimA);
-    if (SPRITES.turret_st.complete && SPRITES.turret_st.naturalWidth)
-      ctx.drawImage(SPRITES.turret_st, -18, -18, 36, 36);
-    else { ctx.fillStyle = '#5e2a2a'; ctx.fillRect(-8, -8, 16, 16); ctx.strokeStyle = '#ff8a7a'; ctx.strokeRect(-8, -8, 16, 16); }
+    if (sprReady(SPRITES.st_barrel)) ctx.drawImage(SPRITES.st_barrel, -20, -20, 40, 40);
+    else { ctx.fillStyle = '#ff8a7a'; ctx.fillRect(0, -2, 16, 4); }
     ctx.restore();
-    ctx.fillStyle = '#222'; ctx.fillRect(p.x - 10, p.y - 15, 20, 3);
-    ctx.fillStyle = '#ff8a7a'; ctx.fillRect(p.x - 10, p.y - 15, 20 * t.hp / t.maxHp, 3);
+    ctx.fillStyle = '#222'; ctx.fillRect(p.x - 10, p.y - 17, 20, 3);
+    ctx.fillStyle = '#ff8a7a'; ctx.fillRect(p.x - 10, p.y - 17, 20 * t.hp / t.maxHp, 3);
   }
 
-  for (const s of [escort, player, ...foes]) if (s.alive) drawShip(s);
-
-  // markers
-  if (moveTarget) {
-    ctx.strokeStyle = '#7fd4ff'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(moveTarget.x, moveTarget.y, 12 + 4 * Math.sin(time * 5), 0, TAU); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(moveTarget.x, moveTarget.y);
-    ctx.strokeStyle = 'rgba(127,212,255,0.2)'; ctx.stroke();
-  }
-  if (attackTarget && attackTarget.alive !== false) {
-    const tp = attackTarget.a !== undefined ? turretPos(attackTarget) : attackTarget;
-    ctx.strokeStyle = '#ff6e5c'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(tp.x, tp.y, 20 + 4 * Math.sin(time * 7), 0, TAU); ctx.stroke();
-  }
+  for (const s of [...allies, ...foes]) if (s.alive) drawShip(s);
+  for (const s of allies) if (s.alive && !autopilot) drawOrderMarker(s);
 
   for (const b of bullets) {
+    ctx.strokeStyle = b.team === 'foe' ? 'rgba(255,110,92,0.4)' : 'rgba(127,212,255,0.4)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(b.x - b.vx * 0.03, b.y - b.vy * 0.03); ctx.lineTo(b.x, b.y); ctx.stroke();
     ctx.fillStyle = b.team === 'foe' ? '#ff6e5c' : '#7fd4ff';
-    ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
+    ctx.fillRect(b.x - 2.5, b.y - 2.5, 5, 5);
   }
 
   for (const p of particles) {
@@ -561,14 +663,24 @@ function draw() {
   ctx.globalAlpha = 1;
   ctx.restore();
 
-  // HUD
-  const nh = player.blocks.filter(b => b.type === 'hull').length;
-  const ne = player.blocks.filter(b => b.type === 'engine').length;
-  const ng = player.blocks.filter(b => b.type === 'turret').length;
-  ctx.fillStyle = '#7fd4ff'; ctx.font = '14px monospace';
-  ctx.fillText(`SHIP  hull:${nh}  eng:${ne}  guns:${ng}`, 16, 24);
+  // ---------- HUD ----------
+  const flag = flagship();
+  if (flag) {
+    const nh = flag.blocks.filter(b => b.type === 'hull').length;
+    const ne = flag.blocks.filter(b => b.type === 'engine').length;
+    const ng = flag.blocks.filter(b => b.type === 'turret').length;
+    ctx.fillStyle = '#7fd4ff'; ctx.font = '14px monospace';
+    ctx.fillText(`FLAGSHIP  hull:${nh}  eng:${ne}  guns:${ng}`, 16, 24);
+  }
+  let hy = 44;
+  for (let i = 1; i < allies.length; i++) {
+    const s = allies[i];
+    ctx.fillStyle = s.alive ? s.color : '#5a6a8a';
+    ctx.fillText(`${s.alive ? (selection.has(s) ? '>' : ' ') + 'WING' + i + ' ' + s.blocks.length + ' blk' : ' WING' + i + ' LOST'}`, 16, hy);
+    hy += 20;
+  }
   ctx.fillStyle = '#9dff8a';
-  ctx.fillText(`WINGMAN ${escort.alive ? escort.blocks.length + ' blocks' : 'LOST'}`, 16, 44);
+  ctx.fillText(`SELECTED ${selection.size}/${allies.filter(s => s.alive).length}`, 16, hy + 4);
 
   const tLeft = station.turrets.filter(t => t.alive).length;
   ctx.fillStyle = '#ff8a7a'; ctx.textAlign = 'right';
@@ -577,21 +689,37 @@ function draw() {
   ctx.fillStyle = '#c8a2ff'; ctx.fillRect(W - 176, 30, 160 * Math.max(0, station.coreHp / station.coreMax), 8);
   ctx.textAlign = 'left';
 
-  autoBtn.x = W - autoBtn.w - 16; autoBtn.y = H - autoBtn.h - 16;
-  ctx.fillStyle = autopilot ? '#1d3a24' : '#141c2e';
-  ctx.strokeStyle = autopilot ? '#9dff8a' : '#4a5a7a'; ctx.lineWidth = 2;
-  ctx.fillRect(autoBtn.x, autoBtn.y, autoBtn.w, autoBtn.h);
-  ctx.strokeRect(autoBtn.x, autoBtn.y, autoBtn.w, autoBtn.h);
-  ctx.fillStyle = autopilot ? '#9dff8a' : '#8aa0c8';
-  ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
-  ctx.fillText(autopilot ? 'AI: ON (P)' : 'AUTOPILOT (P)', autoBtn.x + autoBtn.w / 2, autoBtn.y + 24);
-  ctx.textAlign = 'left';
+  // buttons row
+  allBtn.x = W - allBtn.w - 16; allBtn.y = H - allBtn.h - 16;
+  autoBtn.x = allBtn.x - autoBtn.w - 10; autoBtn.y = allBtn.y;
+  pauseBtn.x = autoBtn.x - pauseBtn.w - 10; pauseBtn.y = allBtn.y;
+
+  const btn = (r, label, on, onColor, offColor) => {
+    ctx.fillStyle = on ? '#1d3a24' : '#141c2e';
+    ctx.strokeStyle = on ? '#9dff8a' : '#4a5a7a'; ctx.lineWidth = 2;
+    ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = on ? '#9dff8a' : '#8aa0c8';
+    ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(label, r.x + r.w / 2, r.y + 24);
+    ctx.textAlign = 'left';
+  };
+  btn(allBtn, 'ALL (A)', selection.size === allies.filter(s => s.alive).length);
+  btn(autoBtn, autopilot ? 'AI: ON (P)' : 'AUTOPILOT (P)', autopilot);
+  btn(pauseBtn, paused ? 'RESUME' : 'PAUSE', paused);
 
   ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-  ctx.fillText('LMB: move / click enemy = target   P: autopilot   R: back to shipyard', 16, H - 16);
+  ctx.fillText('click own ship: select (shift = +)   click space: move   click enemy: attack   A: all   Space: pause   P: AI   R: shipyard', 16, H - 16);
 
+  if (paused) {
+    ctx.fillStyle = 'rgba(5,7,13,0.55)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', W / 2, H / 2);
+    ctx.font = '16px monospace'; ctx.fillStyle = '#8aa0c8';
+    ctx.fillText('Space or RESUME to continue', W / 2, H / 2 + 36);
+    ctx.textAlign = 'left';
+  }
   if (won) { ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('STATION DESTROYED — SALVAGE SECURED  (R: rebuild)', W / 2, H / 2); ctx.textAlign = 'left'; }
-  if (dead) { ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('SHIP LOST — press R to rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
+  if (dead) { ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('FLAGSHIP LOST — press R to rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
 }
 
 // ---------- loop ----------
@@ -599,7 +727,7 @@ let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
-  if (mode === 'flight') update(dt);
+  if (mode === 'flight' && !paused) update(dt);
   draw();
   requestAnimationFrame(loop);
 }
