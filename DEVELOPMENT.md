@@ -35,3 +35,9 @@ Atmospheric psychological horror project.
 
 ### Remote Horizon
 Sci-fi exploration project about humanoid robots and space infrastructure.
+
+### Void Salvage
+Offline space fleet campaign with manual/autopilot control, base raids and planetary landing phases. Playable prototype in `void-salvage/prototype/`.
+
+### Scrap Wars
+PvP vehicle-builder with manual physics combat, base raids and clan sector wars. Shares parts/physics tech with Void Salvage.
