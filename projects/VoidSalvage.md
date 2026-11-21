@@ -4,6 +4,7 @@
 **Audience:** 13–25, mobile-first
 **Status:** Prototype in development (`void-salvage/prototype/`)
 **Monetization:** rewarded ads (opt-in) + cosmetic donations + one-time Premium (removes ads)
+**Art direction:** clean geometric 2D in the spirit of Creeper World — dark field, faint world grid, flat colored shapes, thin outlines. NOT pixel art.
 
 ## Concept
 
@@ -20,20 +21,20 @@ Assemble ships -> fly a mission -> battle (manual flagship + AI wingmen)
 
 ## Control Scheme (decided)
 
-- **Manual mode (default):** the player personally controls the armada — pilots the flagship, issues orders to wingmen (attack / cover me / focus station), can switch direct control to any ship.
-- **Autopilot button:** player presses it -> AI takes over the entire armada including the flagship (commander/spectator mode). Toggleable at any moment in battle.
+- **Mouse orders, no WASD.** Click empty space = move order; click an enemy = target lock, guns auto-aim and fire. RTS-lite: the player commands, the ship executes.
+- **Autopilot button:** hands the entire armada to AI (commander/spectator mode). Toggleable mid-battle.
 
 ## Fleet
 
-Every ship is built from parts — same system as SCRAP WARS machines:
+**Block-grid assembly.** Every ship is literally built from square blocks on a grid — hull plates, engines, guns, and later rocket pods, beams, shield gens, hangar cells, reactors. Blocks must touch; damage is per-block (lose engines = drift, lose guns = toothless).
 
-- Hull -> engine -> weapon slots (cannons, rocket pods, beams, torpedoes) -> armor/shields -> modules (radar, repair, hangar)
-- Classes: **fighter** (fast, fragile), **corvette** (balanced), **frigate** (heavy, volley), **transport** (landing troops + loot hold)
-- Reactor **energy budget** constrains the build.
+- **Starting ship is a junker:** a couple of hull plates, one engine, one basic gun. Progression = more scrap, more block types, bigger grid.
+- Ship classes emerge from builds, not presets: fast fragile builds, heavy volley builds, **transports** (landing bay blocks) for planetary drops.
+- Reactor/energy-budget equivalent: scrap cost per block + mass vs engine count.
 
 ## Combat
 
-2D space with Newton-lite inertia physics: thrust moves you, no brakes — you rotate and burn to stop. Player controls the flagship (or any ship, or nothing on autopilot); wingmen fly their builds under AI and follow orders.
+2D space with inertia: thrust moves you, ships drift — steering is handled by ship AI following your orders. Player issues orders to the flagship and wingmen (or hands everything to autopilot).
 
 - Pre-battle tactics: escort formation, per-ship orders
 - A disabled ship drifts — tow it home or lose it (hardcore mode)
@@ -74,8 +75,8 @@ Sector map, branching missions:
 
 ## MVP Scope
 
-1. **Physics prototype** (HTML5 Canvas, `prototype/`): inertial ship, shooting, enemy station with turrets, one AI wingman, **autopilot toggle** — validate game feel
-2. Core build: ship assembly (~20 parts), 3 mission types, salvage/loot loop, shipyard lite
+1. **Physics prototype** (HTML5 Canvas, `prototype/`): block-grid shipyard, mouse orders, AI wingman, **autopilot toggle** — validate game feel
+2. Core build: more block types, 3 mission types, salvage/loot loop, shipyard lite
 3. Campaign chapters, factions, base raids with landing phase
 4. Online weekend wars (last — needs servers)
 
