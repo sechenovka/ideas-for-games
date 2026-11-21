@@ -52,6 +52,8 @@ let allies = [], foes, station, bullets, particles, stars, planet;
 const selection = new Set(); // ally ships under command
 let rosterSel = new Set();   // chosen escort indices
 let paused = false, autopilot = false, won = false, dead = false, time = 0;
+let salvage = 0, debris = [], msg = null, reinforced = false;
+const budget = () => BUDGET + salvage;
 const autoBtn  = { x: 0, y: 0, w: 150, h: 38 };
 const pauseBtn = { x: 0, y: 0, w: 120, h: 38 };
 const allBtn   = { x: 0, y: 0, w: 140, h: 38 };
@@ -132,7 +134,7 @@ function editorClick(mx, my) {
     return;
   }
   if (!hasNeighbor(r, c)) return;
-  if (gridCost() + TYPES[selected].cost > BUDGET) return;
+  if (gridCost() + TYPES[selected].cost > budget()) return;
   grid[r][c] = selected;
 }
 
@@ -178,7 +180,7 @@ function makeShip(g, x, y, team, color, o = {}) {
     x, y, vx: 0, vy: 0, angle: o.angle ?? 0, va: 0,
     blocks: blocksFromGrid(g), team, color,
     thrust: 0, turn: 0, radius: 0, alive: true,
-    order: null, thrusting: false
+    order: null, thrusting: false, orb: Math.random() < 0.5 ? 1 : -1
   };
   recount(s);
   s.radius = Math.max(...s.blocks.map(b => Math.hypot(b.dx, b.dy))) + CS * 0.7;
@@ -194,26 +196,27 @@ function bw(s, b) {
 function launch() {
   mode = 'flight';
   autopilot = false; paused = false; won = false; dead = false; time = 0;
-  const flag = makeShip(grid, -900, 0, 'ally', '#7fd4ff');
+  debris = []; msg = null; reinforced = false;
+  const flag = makeShip(grid, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
   let i = 0;
   for (const idx of rosterSel) {
     const r = ROSTER[idx];
-    const w = makeShip(gridFromList(r.g), -1000 - i * 90, 140 + i * 110, 'ally', r.color);
+    const w = makeShip(gridFromList(r.g), -720 - i * 90, 130 + i * 110, 'ally', r.color);
     w.order = { kind: 'follow', t: flag, slot: i + 1 };
     allies.push(w); i++;
   }
-  selectAll();
+  selection.clear(); selection.add(flag); // only the flagship is under direct command at start
   foes = [
-    makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret']]), 1300, -400, 'foe', '#ff8a7a'),
-    makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 1500, 400, 'foe', '#ff8a7a'),
-    makeShip(gridFromList([[4,2,'engine'],[4,3,'hull'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[3,5,'turret'],[5,5,'turret']]), 1900, -260, 'foe', '#ffb36e')
+    makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret']]), 750, -380, 'foe', '#ff8a7a'),
+    makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 950, 380, 'foe', '#ff8a7a'),
+    makeShip(gridFromList([[4,2,'engine'],[4,3,'hull'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[3,5,'turret'],[5,5,'turret']]), 1250, -240, 'foe', '#ffb36e')
   ];
   station = {
-    x: 2400, y: 0, r: 80, coreHp: 350, coreMax: 350,
+    x: 1600, y: 0, r: 80, coreHp: 350, coreMax: 350,
     turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true }))
   };
-  planet = { x: 3100, y: 800, r: 420 };
+  planet = { x: 2400, y: 800, r: 420 };
   bullets = []; particles = [];
   stars = [];
   for (let j = 0; j < 500; j++)
@@ -280,13 +283,23 @@ function steerTo(s, pt, dt, hold) {
   const dA = angDiff(s.angle, angleTo(s, pt));
   s.va += (Math.sign(dA) * s.turn - s.va * 3) * dt;
   const d = dist(s, pt);
-  if (Math.abs(dA) < 1.0 && d > hold) {
+  const dirx = (pt.x - s.x) / (d || 1), diry = (pt.y - s.y) / (d || 1);
+  const speedToward = s.vx * dirx + s.vy * diry;
+  const cap = Math.max(25, (d - hold) * 1.3); // brake before overshooting
+  if (Math.abs(dA) < 0.9 && d > hold && speedToward < cap) {
     s.vx += Math.cos(s.angle) * s.thrust * dt;
     s.vy += Math.sin(s.angle) * s.thrust * dt;
     return true;
   }
-  if (d < hold + 60) { s.vx *= (1 - 1.1 * dt); s.vy *= (1 - 1.1 * dt); }
+  if (d < hold + 40 || speedToward > cap + 30) { s.vx *= (1 - 1.4 * dt); s.vy *= (1 - 1.4 * dt); }
   return false;
+}
+
+// orbit attack: circle the target at gun range instead of ramming it
+function attackPoint(s, t) {
+  const p = targetPoint(t);
+  const a = angleTo(p, s) + s.orb * 0.4;
+  return { x: p.x + Math.cos(a) * 340, y: p.y + Math.sin(a) * 340 };
 }
 
 function followPoint(s) {
@@ -334,7 +347,7 @@ function shipBrain(s, dt) {
   const o = s.order;
   let thrusting = false;
   if (o && o.kind === 'attack' && validTarget(o.t)) {
-    thrusting = steerTo(s, targetPoint(o.t), dt, 380) || thrusting;
+    thrusting = steerTo(s, attackPoint(s, o.t), dt, 60) || thrusting;
   } else if (o && o.kind === 'move') {
     thrusting = steerTo(s, o, dt, 30);
     if (dist(s, o) < 40) s.order = null;
@@ -344,9 +357,9 @@ function shipBrain(s, dt) {
   s.thrusting = thrusting;
 }
 
-function allyBrain(s, dt) { // autopilot / unselected fallback? — used when autopilot on
+function allyBrain(s, dt) { // autopilot
   const t = nearestFoe(s);
-  if (t) steerTo(s, t === station ? station : t, dt, 340);
+  if (t) s.thrusting = steerTo(s, attackPoint(s, t === station ? station : t), dt, 60);
 }
 
 function explode(x, y, color, n = 24) {
@@ -369,6 +382,8 @@ function hitShip(s, b) {
     const p = bw(s, blk);
     s.blocks = s.blocks.filter(x => x !== blk);
     explode(p.x, p.y, s.color, 14);
+    // destroyed parts drop as salvageable debris
+    debris.push({ x: p.x, y: p.y, vx: rand(-40, 40), vy: rand(-40, 40), a: rand(0, TAU), va: rand(-2, 2), v: TYPES[blk.type].cost, t: blk.type });
     recount(s);
     if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); }
   }
@@ -379,7 +394,7 @@ function update(dt) {
 
   for (const s of allies) {
     if (!s.alive) continue;
-    if (autopilot) { allyBrain(s, dt); s.thrusting = true; }
+    if (autopilot) allyBrain(s, dt);
     else shipBrain(s, dt);
     s.angle += s.va * dt;
     s.x += s.vx * dt; s.y += s.vy * dt;
@@ -394,10 +409,18 @@ function update(dt) {
   for (const f of foes) {
     if (!f.alive) continue;
     const t = nearestAlly(f);
-    if (t) f.thrusting = steerTo(f, t, dt, 300);
+    if (t) f.thrusting = steerTo(f, attackPoint(f, t), dt, 60);
     f.angle += f.va * dt;
     f.x += f.vx * dt; f.y += f.vy * dt;
     autoFire(f, dt, null);
+  }
+
+  // reinforcements when the shield ring falls
+  if (!reinforced && station.turrets.every(t => !t.alive)) {
+    reinforced = true;
+    msg = { text: 'SHIELD DOWN — REINFORCEMENTS INBOUND', t: 4 };
+    foes.push(makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), station.x + 200, -300, 'foe', '#ff8a7a'));
+    foes.push(makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull']]), station.x + 200, 300, 'foe', '#ff8a7a'));
   }
 
   for (const t of station.turrets) {
@@ -439,6 +462,22 @@ function update(dt) {
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
   particles = particles.filter(p => p.ttl > 0);
+
+  // salvage pickups
+  for (const d of debris) {
+    d.x += d.vx * dt; d.y += d.vy * dt; d.a += d.va * dt;
+    d.vx *= (1 - 0.4 * dt); d.vy *= (1 - 0.4 * dt);
+    for (const s of allies) {
+      if (s.alive && dist(s, d) < s.radius + 30) {
+        salvage += d.v; d.got = true;
+        explode(d.x, d.y, '#ffcf6e', 6);
+        break;
+      }
+    }
+  }
+  debris = debris.filter(d => !d.got);
+
+  if (msg) { msg.t -= dt; if (msg.t <= 0) msg = null; }
 
   if (!allies.some(s => s.alive)) dead = true;
   else if (!allies[0].alive) dead = true; // flagship lost = mission failed
@@ -521,7 +560,7 @@ function drawEditor() {
   const mass = flat.length, eng = n('engine');
   const sy = gs.y + GRID * gs.s + 30;
   ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
-  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${gridCost()}/${BUDGET}`, gs.x, sy);
+  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${gridCost()}/${budget()}${salvage ? '  (+' + salvage + ' salvaged)' : ''}`, gs.x, sy);
 
   const chk = canLaunch();
   launchBtn.x = px; launchBtn.y = sy - 34;
@@ -644,6 +683,13 @@ function draw() {
     ctx.fillStyle = '#ff8a7a'; ctx.fillRect(p.x - 10, p.y - 17, 20 * t.hp / t.maxHp, 3);
   }
 
+  for (const d of debris) {
+    ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.a);
+    ctx.fillStyle = '#b06a2a'; ctx.fillRect(-5, -5, 10, 10);
+    ctx.strokeStyle = '#ffcf6e'; ctx.lineWidth = 1.5; ctx.strokeRect(-5, -5, 10, 10);
+    ctx.restore();
+  }
+
   for (const s of [...allies, ...foes]) if (s.alive) drawShip(s);
   for (const s of allies) if (s.alive && !autopilot) drawOrderMarker(s);
 
@@ -681,6 +727,8 @@ function draw() {
   }
   ctx.fillStyle = '#9dff8a';
   ctx.fillText(`SELECTED ${selection.size}/${allies.filter(s => s.alive).length}`, 16, hy + 4);
+  ctx.fillStyle = '#ffcf6e';
+  ctx.fillText(`SALVAGE +${salvage} (next build: ${budget()} scrap)`, 16, hy + 24);
 
   const tLeft = station.turrets.filter(t => t.alive).length;
   ctx.fillStyle = '#ff8a7a'; ctx.textAlign = 'right';
@@ -710,6 +758,11 @@ function draw() {
   ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
   ctx.fillText('click own ship: select (shift = +)   click space: move   click enemy: attack   A: all   Space: pause   P: AI   R: shipyard', 16, H - 16);
 
+  if (msg) {
+    ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(msg.text, W / 2, 60);
+    ctx.textAlign = 'left';
+  }
   if (paused) {
     ctx.fillStyle = 'rgba(5,7,13,0.55)'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center';
