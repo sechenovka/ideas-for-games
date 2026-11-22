@@ -26,16 +26,18 @@ const TYPES = {
   ammo:   { cost: 2, hp: 16, color: '#4a3a1a', edge: '#ffd24a', name: 'AMMO' },
   marine: { cost: 3, hp: 25, color: '#1e3a2a', edge: '#5affa0', name: 'MARINE' },
   pd:     { cost: 3, hp: 22, color: '#2a3a4a', edge: '#8ad4ff', name: 'PD' },
+  repair: { cost: 4, hp: 24, color: '#1e3a34', edge: '#5affc0', name: 'REPAIR' },
+  mines:  { cost: 3, hp: 20, color: '#3a1e24', edge: '#ff6a4a', name: 'MINES' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
   turret: '#3d4f63', armor: '#6a7078', rocket: '#7a4a3a', cargo: '#a0762a',
   gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
-  marine: '#2a8a50', pd: '#5a7a9a',
+  marine: '#2a8a50', pd: '#5a7a9a', repair: '#2a9a70', mines: '#8a3a3a',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -48,11 +50,12 @@ const ROSTER = [
   { name: 'COLLECTOR', desc: 'gyro + cargo', color: '#3ae8a8', g: [[4,3,'engine'],[4,4,'gyro'],[4,5,'turret'],[3,4,'cargo'],[5,4,'cargo']] },
   { name: 'BEAMER',  desc: 'melting laser', color: '#ff5c9a', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'laser'],[3,4,'hull'],[5,4,'hull']] },
   { name: 'CORSAIR', desc: 'boarding + PD', color: '#5affa0', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'marine'],[3,4,'pd'],[5,4,'hull'],[4,6,'turret']] },
+  { name: 'SAPPER',  desc: 'mines + repair', color: '#ff9d5c', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'mines'],[3,4,'repair'],[5,4,'hull'],[4,6,'turret']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -98,7 +101,7 @@ const CONTRACTS = {
   belt:    { name: 'BELT SWEEP', desc: 'clear 12 hostiles out of the rock field — dodging required', accent: '#8ad4ff' },
   hunt:    { name: 'ELITE HUNT', desc: 'a pirate flagship and its escorts — bring real guns', accent: '#ffcf6e' },
 };
-let salvage = 0, debris = [], msg = null, reinforced = false;
+let salvage = 0, debris = [], mines = [], msg = null, reinforced = false;
 // build capacity is the limiter — the workbench field itself is unbounded
 const depotBonus = () => ((profile && profile.base) || []).reduce((n, b) => n + (b && b.t === 'depot' ? b.lvl * 3 : 0), 0);
 const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + depotBonus() + Math.floor(salvage);
@@ -175,6 +178,7 @@ addEventListener('keydown', e => {
   if (mode !== 'flight') return;
   if (e.code === 'KeyP') autopilot = !autopilot;
   if (e.code === 'KeyA') selectAll();
+  if (e.code === 'KeyM') for (const s of selection) if (s.alive) dropMine(s);
   if (e.code === 'KeyR') mode = 'editor';
   if (e.code === 'Escape') { if (mined) { profile.ore = (profile.ore || 0) + mined; mined = 0; } saveProfile(); mode = 'base'; }
   if (e.code === 'KeyL' && won && mission === 'station') initPlanet();
@@ -316,7 +320,7 @@ function blocksFromList(list) {
     variant: t === 'hull' ? HULL_VARIANTS[Math.floor(Math.random() * HULL_VARIANTS.length)] : t,
     aim: 0,
     pix: new Uint8Array(BP * BP).fill(1), pixCount: BP * BP,
-    barrels: t === 'turret' ? 1 : 0, heat: 0
+    barrels: t === 'turret' ? 1 : 0, heat: 0, charges: t === 'mines' ? 4 : 0
   }));
 }
 
@@ -354,7 +358,7 @@ function launch() {
   saveProfile();
   mode = 'flight';
   autopilot = false; paused = false; won = false; dead = false; time = 0;
-  debris = []; msg = null; reinforced = false;
+  debris = []; mines = []; msg = null; reinforced = false;
   foesDown = 0; beltGoal = 0; elite = null; banked = false; mined = 0;
   const flag = makeShip(design, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
@@ -800,6 +804,28 @@ function checkBlockDead(s, blk) {
 
 const pendingWrecks = [];
 
+// mines: dispenser racks drop proximity charges (M key) — indiscriminate
+// blast, arms after a second so you can't suicide-drop it on your own hull
+function dropMine(s) {
+  const b = s.blocks.find(x => x.type === 'mines' && (x.charges || 0) > 0);
+  if (!b) return;
+  b.charges--;
+  mines.push({ x: s.x, y: s.y, vx: s.vx * 0.2, vy: s.vy * 0.2, team: s.team, arm: 1.0, ttl: 90 });
+  msg = { text: `MINE OUT — ${b.charges} LEFT`, t: 1.2 };
+}
+
+function mineBlast(m) {
+  explode(m.x, m.y, '#ff6a4a', 44);
+  for (const sh of [...allies, ...foes]) {
+    if (!sh.alive) continue;
+    for (const bl of sh.blocks.slice()) {
+      const bp = bw(sh, bl);
+      if (Math.hypot(bp.x - m.x, bp.y - m.y) < CS * 2.6)
+        erodeBlock(sh, bl, bp.x + rand(-8, 8), bp.y + rand(-8, 8), 6);
+    }
+  }
+}
+
 // a breached magazine cooks off — pixels chewed out of everything close,
 // including your own hull. Keep ammo behind armor or don't mount it
 function ammoBlast(s, pos) {
@@ -1101,6 +1127,37 @@ function update(dt) {
   // heated blocks cool down — hold the beam on target or the metal re-freezes
   for (const s of [...allies, ...foes])
     for (const b of s.blocks) if (b.heat > 0) b.heat = Math.max(0, b.heat - 140 * dt);
+
+  // repair drones weld dead pixels back — slow, most damaged block first
+  for (const s of [...allies, ...foes]) {
+    if (!s.alive) continue;
+    for (const b of s.blocks) if (b.type === 'repair') {
+      b.cd = (b.cd || 0) - dt;
+      if (b.cd > 0) continue;
+      let tgt = null, worst = BP * BP;
+      for (const o of s.blocks) if (o.pixCount < worst) { worst = o.pixCount; tgt = o; }
+      if (tgt) {
+        const deadPx = [];
+        for (let i = 0; i < BP * BP; i++) if (!tgt.pix[i]) deadPx.push(i);
+        const i = deadPx[Math.floor(Math.random() * deadPx.length)];
+        tgt.pix[i] = 1; tgt.pixCount++;
+        b.cd = 0.9;
+        const bp = bw(s, tgt);
+        particles.push({ x: bp.x + rand(-8, 8), y: bp.y + rand(-8, 8), vx: rand(-30, 30), vy: rand(-30, 30), ttl: 0.3, max: 0.3, color: '#5affc0', r: 2.5 });
+      }
+    }
+  }
+
+  // mines drift, arm, and pop anything of the wrong team in the bubble
+  for (const m of mines) {
+    m.x += m.vx * dt; m.y += m.vy * dt; m.arm -= dt; m.ttl -= dt;
+    if (m.ttl <= 0) { m.dead = true; continue; }
+    if (m.arm > 0) continue;
+    for (const s of (m.team === 'ally' ? foes : allies)) {
+      if (s.alive && dist(m, s) < s.radius + 30) { mineBlast(m); m.dead = true; break; }
+    }
+  }
+  mines = mines.filter(m => !m.dead);
 
   if (msg) { msg.t -= dt; if (msg.t <= 0) msg = null; }
 
@@ -1603,6 +1660,21 @@ function draw() {
     ctx.restore();
   }
 
+  // mines — spiky dots, blink once armed
+  for (const m of mines) {
+    ctx.save(); ctx.translate(m.x, m.y);
+    const armed = m.arm <= 0, blink = !armed || (time * 4 | 0) % 2;
+    ctx.fillStyle = armed ? '#ff6a4a' : '#8a5a4a';
+    ctx.beginPath(); ctx.arc(0, 0, 6, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#ffb0a0'; ctx.lineWidth = 1.5;
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * TAU;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a) * 5, Math.sin(a) * 5); ctx.lineTo(Math.cos(a) * 9, Math.sin(a) * 9); ctx.stroke();
+    }
+    if (blink) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, 2, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+
   // cargo pods
   for (const pod of pods) {
     ctx.save(); ctx.translate(pod.x, pod.y); ctx.rotate(0.3);
@@ -1709,7 +1781,7 @@ function draw() {
   btn(pauseBtn, paused ? 'RESUME' : 'PAUSE', paused);
 
   ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-  ctx.fillText('LMB ship: select (shift=+)   LMB: move/attack   RMB drag: pan   wheel: zoom   F: flagship   A: all   Space: pause   P: AI   R: shipyard', 16, H - 16);
+  ctx.fillText('LMB ship: select (shift=+)   LMB: move/attack   M: mines   RMB drag: pan   wheel: zoom   F: flagship   A: all   Space: pause   P: AI   R: shipyard', 16, H - 16);
 
   if (msg) {
     ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
