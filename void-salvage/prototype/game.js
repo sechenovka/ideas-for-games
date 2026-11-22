@@ -106,8 +106,10 @@ const CONTRACTS = {
   station: { name: 'RAID THE STATION', desc: 'break the shield ring, kill the core, land on the planet', accent: '#ff8a7a' },
   belt:    { name: 'BELT SWEEP', desc: 'clear 12 hostiles out of the rock field — dodging required', accent: '#8ad4ff' },
   hunt:    { name: 'ELITE HUNT', desc: 'a pirate flagship and its escorts — bring real guns', accent: '#ffcf6e' },
+  defense: { name: 'BASE DEFENSE', desc: 'pirates inbound — hold the line', accent: '#ff8a7a', hidden: true },
 };
 let salvage = 0, debris = [], mines = [], msg = null, reinforced = false;
+let baseShip = null, defWave = 0, baseLost = false, raidWarn = false;
 // build capacity is the limiter — the workbench field itself is unbounded
 const depotBonus = () => ((profile && profile.base) || []).reduce((n, b) => n + (b && b.t === 'depot' ? b.lvl * 3 : 0), 0);
 const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + depotBonus() + Math.floor(salvage);
@@ -187,7 +189,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyA') selectAll();
   if (e.code === 'KeyM') for (const s of selection) if (s.alive) dropMine(s);
   if (e.code === 'KeyR') mode = 'editor';
-  if (e.code === 'Escape') { if (mined) { profile.ore = (profile.ore || 0) + mined; mined = 0; } saveProfile(); mode = 'base'; }
+  if (e.code === 'Escape') { if (mined) { profile.ore = (profile.ore || 0) + mined; mined = 0; } saveProfile(); raidWarn = Math.random() < 0.4; mode = 'base'; }
   if (e.code === 'KeyL' && won && mission === 'station') initPlanet();
   if (e.code === 'KeyF') { const f = allies.find(s => s.alive); if (f) { cam.x = f.x; cam.y = f.y; } }
   if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
@@ -226,7 +228,7 @@ addEventListener('contextmenu', e => e.preventDefault());
 
 function selectAll() {
   selection.clear();
-  for (const s of allies) if (s.alive) selection.add(s);
+  for (const s of allies) if (s.alive && !s.isBase) selection.add(s);
 }
 const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
@@ -378,6 +380,7 @@ function launch() {
   autopilot = false; paused = false; won = false; dead = false; time = 0;
   debris = []; mines = []; msg = null; reinforced = false;
   foesDown = 0; beltGoal = 0; elite = null; banked = false; mined = 0;
+  baseShip = null; defWave = 0; baseLost = false;
   const flag = makeShip(design, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
   cam.x = flag.x; cam.y = flag.y; cam.zoom = 1;
@@ -446,6 +449,31 @@ function launch() {
     for (const [ax, ay] of apos) asteroids.push(makeAsteroid(ax + rand(-40, 40), ay + rand(-40, 40), rand(26, 58)));
     spawnRoamer(); spawnRoamer(); // fast movers already on the map
     roamerT = 14;
+  } else if (mission === 'defense') { // pirates raid YOUR base — the grid fights back
+    station = noStation; planet = null; pods = [];
+    // every building becomes a block cluster — turret buildings shoot
+    const gl = [];
+    (profile.base || []).forEach((b, i) => {
+      if (!b) return;
+      const gx = (i % 4) * 3, gy = Math.floor(i / 4) * 3;
+      if (b.t === 'turret') {
+        gl.push([gx, gy, 'turret'], [gx + 1, gy, 'armor'], [gx, gy + 1, 'ammo'], [gx + 1, gy + 1, 'armor']);
+        for (let l = 1; l < Math.min(b.lvl, 3); l++) gl.push([gx + 2, gy + l - 1, 'turret']);
+      } else if (b.t === 'mine') gl.push([gx, gy, 'armor'], [gx + 1, gy, 'armor'], [gx, gy + 1, 'armor'], [gx + 1, gy + 1, 'hull']);
+      else if (b.t === 'smelter') gl.push([gx, gy, 'hull'], [gx + 1, gy, 'hull'], [gx, gy + 1, 'armor'], [gx + 1, gy + 1, 'hull']);
+      else if (b.t === 'depot') gl.push([gx, gy, 'cargo'], [gx + 1, gy, 'hull'], [gx, gy + 1, 'hull'], [gx + 1, gy + 1, 'battery']);
+    });
+    if (!gl.length) gl.push([0, 0, 'hull'], [1, 0, 'hull'], [0, 1, 'hull'], [1, 1, 'armor']); // bare pad
+    baseShip = makeShip(gridFromList(gl), 1500, 0, 'ally', '#8aa0c8');
+    baseShip.isBase = true;
+    baseShip.order = { kind: 'move', x: 1500, y: 0 };
+    allies.push(baseShip);
+    // the fleet scrambles to the base, not its usual far spawn
+    allies.forEach((s, i) => { if (s !== baseShip) { s.x = 850 - i * 60; s.y = -140 + i * 100; s.vx = s.vy = 0; } });
+    cam.x = 1100; cam.y = 0;
+    foes = []; waveT = 1.5; roamerT = 1e9;
+    for (let k = 0; k < 8; k++)
+      asteroids.push(makeAsteroid(rand(-400, 1000), rand(-700, 700), rand(26, 54)));
   } else { // 'test' — firing range: dummies, no engines, no guns, no pay
     station = noStation; planet = null;
     foes = [
@@ -1138,10 +1166,40 @@ function update(dt) {
   // test range: every dummy scrapped or husked (wrecks don't count)
   if (mission === 'test' && !won && foes.every(f => !f.alive || f.wreck)) won = true;
 
+  // base defense: three waves at your installation — lose the base, lose a building
+  if (mission === 'defense' && !won && !baseLost) {
+    if (baseShip && !baseShip.alive) {
+      baseLost = true; dead = true;
+      const idxs = (profile.base || []).map((b, i) => b ? i : -1).filter(i => i >= 0);
+      if (idxs.length) {
+        const i = idxs[Math.floor(Math.random() * idxs.length)];
+        profile.base[i].lvl--;
+        if (profile.base[i].lvl <= 0) profile.base[i] = null;
+        refreshLvl();
+      }
+      saveProfile();
+      msg = { text: 'BASE OVERRUN — A BUILDING WAS DAMAGED', t: 5 };
+    } else {
+      const alive = foes.filter(f => f.alive && !f.wreck).length;
+      if (!alive && defWave < 3) {
+        defWave++;
+        for (let k = 0; k < defWave + 1; k++) {
+          const a = rand(-0.9, 0.9);
+          const f = makeShip(gridFromList(BELT_DESIGNS[Math.floor(Math.random() * BELT_DESIGNS.length)]),
+            baseShip.x + Math.cos(a) * rand(900, 1300), baseShip.y + Math.sin(a) * rand(900, 1300), 'foe', '#ff8a7a');
+          f.role = 'interceptor';
+          foes.push(f);
+        }
+        msg = { text: `RAID WAVE ${defWave}/3`, t: 2.5 };
+      }
+      if (defWave >= 3 && !alive) won = true;
+    }
+  }
+
   // contract payout — banked once, straight into the profile
-  if (won && !banked && (mission === 'belt' || mission === 'hunt')) {
+  if (won && !banked && (mission === 'belt' || mission === 'hunt' || mission === 'defense')) {
     banked = true;
-    const reward = mission === 'belt' ? { scrap: 60, ore: 15 } : { scrap: 140, ore: 30 };
+    const reward = mission === 'belt' ? { scrap: 60, ore: 15 } : mission === 'defense' ? { scrap: 50, ore: 20 } : { scrap: 140, ore: 30 };
     profile.scrap = (profile.scrap || 0) + reward.scrap;
     profile.ore = (profile.ore || 0) + reward.ore + mined;
     saveProfile();
@@ -1383,7 +1441,9 @@ function drawBase() {
   ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
   ctx.fillText('CONTRACTS', lx, y); y += 10;
   for (const k of Object.keys(CONTRACTS)) {
-    const c = CONTRACTS[k], sel = mission === k;
+    const c = CONTRACTS[k];
+    if (c.hidden) continue;
+    const sel = mission === k;
     const r = { x: lx, y, w: lw, h: 54 };
     baseRects.push({ r, fn: () => { mission = k; mode = 'editor'; } });
     ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
@@ -1395,6 +1455,22 @@ function drawBase() {
     ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace';
     ctx.fillText(c.desc, r.x + 16, y + 38);
     y += 62;
+  }
+  // pirates picked up your base on their scopes — fight or lose a building
+  if (raidWarn) {
+    const r = { x: lx, y, w: lw, h: 54 };
+    baseRects.push({ r, fn: () => {
+      raidWarn = false; mission = 'defense';
+      if (canLaunch().ok) launch(); else mode = 'editor';
+    } });
+    const pulse = 0.55 + 0.35 * Math.sin(performance.now() / 160);
+    ctx.fillStyle = `rgba(60,10,10,${pulse})`; ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = '#ff5a4a'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 15px monospace';
+    ctx.fillText('!! PIRATE RAID INBOUND — DEFEND', r.x + 16, y + 22);
+    ctx.fillStyle = '#c8a09a'; ctx.font = '11px monospace';
+    ctx.fillText('your buildings will fight — lose and one is damaged', r.x + 16, y + 40);
+    y += 64;
   }
   lbtn('BACK TO MENU', '#5a6a8a', 44, () => { mode = 'menu'; });
 
@@ -1479,7 +1555,7 @@ function drawEditor() {
   const gs = { x: v.x - 260, y: 60 }; // anchor for labels/stats
 
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 20px monospace';
-  ctx.fillText(`SHIPYARD — ${CONTRACTS[mission].name}`, gs.x, gs.y - 46);
+  ctx.fillText(`SHIPYARD — ${(CONTRACTS[mission] || {}).name || 'TEST RANGE'}`, gs.x, gs.y - 46);
   ctx.fillStyle = '#5a6a8a'; ctx.font = '13px monospace';
   ctx.fillText('click palette, click near a part to weld it on  •  click a part to rip it off', gs.x, gs.y - 24);
 
@@ -1865,6 +1941,9 @@ function draw() {
     ctx.fillText(`BELT SWEEP  KILLS ${foesDown}/${beltGoal}`, W - 16, 24);
   } else if (mission === 'hunt') {
     ctx.fillText(`ELITE HUNT  ${elite && elite.alive ? 'FLAGSHIP ACTIVE' : 'FLAGSHIP DOWN'}`, W - 16, 24);
+  } else if (mission === 'defense') {
+    const hp = baseShip ? baseShip.blocks.length : 0;
+    ctx.fillText(`BASE DEFENSE  WAVE ${defWave}/3  BASE HULL ${hp}`, W - 16, 24);
   } else {
     ctx.fillText(`TEST RANGE  TARGETS LEFT ${foes.filter(f => f.alive && !f.wreck).length}`, W - 16, 24);
   }
@@ -1909,11 +1988,17 @@ function draw() {
       ? 'STATION DESTROYED — L: LAND ON PLANET   R: rebuild   ESC: base'
       : mission === 'test'
         ? 'TEST COMPLETE — R: retest   ESC: base'
-        : 'CONTRACT COMPLETE — R: fly again   ESC: base';
+        : mission === 'defense'
+          ? 'BASE HELD — R: patrol   ESC: base'
+          : 'CONTRACT COMPLETE — R: fly again   ESC: base';
     ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center';
     ctx.fillText(txt, W / 2, H / 2); ctx.textAlign = 'left';
   }
-  if (dead) { ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('FLAGSHIP LOST — press R to rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
+  if (dead) {
+    ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(baseLost ? 'BASE OVERRUN — press R to regroup' : 'FLAGSHIP LOST — press R to rebuild', W / 2, H / 2);
+    ctx.textAlign = 'left';
+  }
 }
 
 // ==================== PLANET MODE ====================
