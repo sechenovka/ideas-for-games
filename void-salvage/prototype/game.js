@@ -421,6 +421,7 @@ function launch() {
   debris = []; mines = []; msg = null; reinforced = false;
   foesDown = 0; beltGoal = 0; elite = null; banked = false; mined = 0;
   baseShip = null; defWave = 0; baseLost = false; hauler = null; haulerLost = false; towGot = 0;
+  missionFaction = FACTIONS.sabres; // default doctrine, overridden per contract
   const flag = makeShip(design, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
   cam.x = flag.x; cam.y = flag.y; cam.zoom = 1;
@@ -439,6 +440,7 @@ function launch() {
   if (mission === 'belt') {
     station = noStation; planet = null;
     beltGoal = 12; waveT = 4;
+    missionFaction = [FACTIONS.sabres, FACTIONS.iron, FACTIONS.cult][Math.floor(rand(0, 3))]; // the belt rotates gangs
     foes = [];
     for (let k = 0; k < 3; k++) spawnBeltFoe();
     pods = [{ x: 400, y: -300, hp: 40 }, { x: -200, y: 350, hp: 40 }, { x: 800, y: 200, hp: 40 }];
@@ -512,6 +514,7 @@ function launch() {
     allies.forEach((s, i) => { if (s !== baseShip) { s.x = 850 - i * 60; s.y = -140 + i * 100; s.vx = s.vy = 0; } });
     cam.x = 1100; cam.y = 0;
     foes = []; waveT = 1.5; roamerT = 1e9;
+    missionFaction = FACTIONS.iron; // the pact comes for your foundries
     for (let k = 0; k < 8; k++)
       asteroids.push(makeAsteroid(rand(-400, 1000), rand(-700, 700), rand(26, 54)));
   } else if (mission === 'convoy') { // shepherd a slow freighter across the belt
@@ -526,6 +529,7 @@ function launch() {
     hauler.order = { kind: 'move', x: 2600, y: 0 };
     allies.push(hauler);
     foes = []; waveT = 3; roamerT = 9;
+    missionFaction = FACTIONS.sabres; // sabres smell an easy payday
     for (let k = 0; k < 14; k++) {
       const ax = rand(200, 2200), ay = rand(-800, 800);
       asteroids.push(makeAsteroid(ax, ay, rand(24, 60)));
@@ -544,6 +548,7 @@ function launch() {
       return f;
     });
     waveT = 18; roamerT = 12;
+    missionFaction = FACTIONS.cult; // cultists want the hulks too
     for (let k = 0; k < 10; k++)
       asteroids.push(makeAsteroid(rand(0, 1800), rand(-700, 800), rand(24, 55)));
     spawnRoamer();
@@ -572,9 +577,25 @@ const BELT_DESIGNS = [
   [[4,3,'engine'],[4,4,'armor'],[4,5,'turret'],[3,4,'hull']],
   [[4,3,'engine'],[4,4,'hull'],[4,5,'rocket'],[3,4,'armor']],
 ];
+// pirate doctrines — every wave leans on its own toys, not generic gunships
+const FACTIONS = {
+  sabres: { name: 'RED SABRES', color: '#ff8a7a', designs: BELT_DESIGNS },
+  iron:   { name: 'IRON PACT', color: '#ffb36e', designs: [
+    [[4,2,'engine'],[4,3,'armor'],[4,4,'armor'],[4,5,'turret'],[3,4,'armor'],[5,4,'armor'],[4,6,'shield']],
+    [[4,2,'engine'],[4,3,'armor'],[4,4,'hull'],[4,5,'torp'],[3,4,'armor'],[5,4,'shield'],[4,6,'armor']],
+    [[4,2,'engine'],[4,3,'armor'],[4,4,'armor'],[4,5,'rocket'],[3,4,'armor'],[5,4,'turret'],[4,6,'shield'],[3,5,'hull']],
+  ]},
+  cult:   { name: 'VOID CULT', color: '#b06aff', designs: [
+    [[4,3,'engine'],[4,4,'hull'],[4,5,'jam'],[3,4,'hull'],[5,4,'mines'],[4,6,'hull']],
+    [[4,3,'engine'],[4,4,'hull'],[4,5,'trac'],[3,4,'turret'],[5,4,'jam'],[4,6,'armor']],
+    [[4,2,'engine'],[4,3,'engine'],[4,4,'hull'],[4,5,'laser'],[3,4,'pd'],[5,4,'jam'],[4,6,'hull']],
+  ]},
+};
+let missionFaction = FACTIONS.sabres;
+const factionDesign = () => missionFaction.designs[Math.floor(Math.random() * missionFaction.designs.length)];
 function spawnBeltFoe() {
   const a = rand(0, TAU), d = rand(1200, 1500);
-  const f = makeShip(gridFromList(BELT_DESIGNS[Math.floor(Math.random() * BELT_DESIGNS.length)]), Math.cos(a) * d, Math.sin(a) * d, 'foe', '#ff8a7a');
+  const f = makeShip(gridFromList(factionDesign()), Math.cos(a) * d, Math.sin(a) * d, 'foe', missionFaction.color);
   f.role = 'interceptor';
   foes.push(f);
 }
@@ -1278,12 +1299,12 @@ function update(dt) {
         waveT = 13;
         for (let k = 0; k < 2; k++) {
           const a = rand(-0.6, 0.6) + (Math.random() < 0.5 ? 0 : Math.PI);
-          const f = makeShip(gridFromList(BELT_DESIGNS[Math.floor(Math.random() * BELT_DESIGNS.length)]),
-            hauler.x + Math.cos(a) * rand(700, 1000), hauler.y + Math.sin(a) * rand(700, 1000), 'foe', '#ff8a7a');
+          const f = makeShip(gridFromList(factionDesign()),
+            hauler.x + Math.cos(a) * rand(700, 1000), hauler.y + Math.sin(a) * rand(700, 1000), 'foe', missionFaction.color);
           f.role = 'interceptor';
           foes.push(f);
         }
-        msg = { text: 'RAIDERS INBOUND — COVER THE HAULER', t: 2.5 };
+        msg = { text: `${missionFaction.name} RAIDERS — COVER THE HAULER`, t: 2.5 };
       }
     }
   }
@@ -1304,11 +1325,11 @@ function update(dt) {
     if (waveT <= 0 && alive < 3) {
       waveT = 22;
       const a = rand(0, TAU);
-      const f = makeShip(gridFromList(BELT_DESIGNS[Math.floor(Math.random() * BELT_DESIGNS.length)]),
-        600 + Math.cos(a) * 900, Math.sin(a) * 900, 'foe', '#ff8a7a');
+      const f = makeShip(gridFromList(factionDesign()),
+        600 + Math.cos(a) * 900, Math.sin(a) * 900, 'foe', missionFaction.color);
       f.role = 'interceptor';
       foes.push(f);
-      msg = { text: 'SCAVENGER PIRATE INBOUND', t: 2.5 };
+      msg = { text: `${missionFaction.name} SCAVENGER INBOUND`, t: 2.5 };
     }
   }
 
@@ -1334,12 +1355,12 @@ function update(dt) {
         defWave++;
         for (let k = 0; k < defWave + 1; k++) {
           const a = rand(-0.9, 0.9);
-          const f = makeShip(gridFromList(BELT_DESIGNS[Math.floor(Math.random() * BELT_DESIGNS.length)]),
-            baseShip.x + Math.cos(a) * rand(900, 1300), baseShip.y + Math.sin(a) * rand(900, 1300), 'foe', '#ff8a7a');
+          const f = makeShip(gridFromList(factionDesign()),
+            baseShip.x + Math.cos(a) * rand(900, 1300), baseShip.y + Math.sin(a) * rand(900, 1300), 'foe', missionFaction.color);
           f.role = 'interceptor';
           foes.push(f);
         }
-        msg = { text: `RAID WAVE ${defWave}/3`, t: 2.5 };
+        msg = { text: `${missionFaction.name} — WAVE ${defWave}/3`, t: 2.5 };
       }
       if (defWave >= 3 && !alive) won = true;
     }
@@ -2167,7 +2188,7 @@ function draw() {
     ctx.fillStyle = '#222'; ctx.fillRect(W - 176, 30, 160, 8);
     ctx.fillStyle = '#c8a2ff'; ctx.fillRect(W - 176, 30, 160 * Math.max(0, station.coreHp / station.coreMax), 8);
   } else if (mission === 'belt') {
-    ctx.fillText(`BELT SWEEP  KILLS ${foesDown}/${beltGoal}`, W - 16, 24);
+    ctx.fillText(`BELT SWEEP  ${missionFaction.name}  KILLS ${foesDown}/${beltGoal}`, W - 16, 24);
   } else if (mission === 'hunt') {
     ctx.fillText(`ELITE HUNT  ${elite && elite.alive ? 'FLAGSHIP ACTIVE' : 'FLAGSHIP DOWN'}`, W - 16, 24);
   } else if (mission === 'defense') {
