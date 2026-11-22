@@ -28,16 +28,18 @@ const TYPES = {
   pd:     { cost: 3, hp: 22, color: '#2a3a4a', edge: '#8ad4ff', name: 'PD' },
   repair: { cost: 4, hp: 24, color: '#1e3a34', edge: '#5affc0', name: 'REPAIR' },
   mines:  { cost: 3, hp: 20, color: '#3a1e24', edge: '#ff6a4a', name: 'MINES' },
+  battery:{ cost: 2, hp: 22, color: '#1e3a22', edge: '#6aff7a', name: 'CELL' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
   turret: '#3d4f63', armor: '#6a7078', rocket: '#7a4a3a', cargo: '#a0762a',
   gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
   marine: '#2a8a50', pd: '#5a7a9a', repair: '#2a9a70', mines: '#8a3a3a',
+  battery: '#3a9a4a',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -51,11 +53,12 @@ const ROSTER = [
   { name: 'BEAMER',  desc: 'melting laser', color: '#ff5c9a', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'laser'],[3,4,'hull'],[5,4,'hull']] },
   { name: 'CORSAIR', desc: 'boarding + PD', color: '#5affa0', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'marine'],[3,4,'pd'],[5,4,'hull'],[4,6,'turret']] },
   { name: 'SAPPER',  desc: 'mines + repair', color: '#ff9d5c', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'mines'],[3,4,'repair'],[5,4,'hull'],[4,6,'turret']] },
+  { name: 'VOLT',    desc: 'laser + cells', color: '#6aff7a', g: [[4,3,'engine'],[4,4,'battery'],[4,5,'laser'],[3,4,'battery'],[5,4,'hull']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -147,6 +150,7 @@ const autoBtn  = { x: 0, y: 0, w: 150, h: 38 };
 const pauseBtn = { x: 0, y: 0, w: 120, h: 38 };
 const allBtn   = { x: 0, y: 0, w: 140, h: 38 };
 const launchBtn = { x: 0, y: 0, w: 170, h: 46 };
+const testBtn = { x: 0, y: 0, w: 170, h: 46 };
 const palette = {};   // part key -> rect
 const rosterRects = []; // i -> rect
 
@@ -282,6 +286,7 @@ function editorClick(mx, my) {
     }
   }
   if (inRect(launchBtn, mx, my)) { if (canLaunch().ok) launch(); return; }
+  if (inRect(testBtn, mx, my)) { if (canLaunch().ok) { mission = 'test'; launch(); } return; }
   const v = view(), ctr = designCenter();
   const px = (mx - v.x) / v.k + ctr.dx, py = (my - v.y) / v.k + ctr.dy;
   // click a part -> rip it off
@@ -334,6 +339,11 @@ function recount(s) {
   s.thrust = eng * 220 / (mass * 0.5);
   s.turn = Math.max(1.0, 2.4 - mass * 0.08 + gyro * 0.4);
   s.cargo = s.blocks.some(b => b.type === 'cargo');
+  // energy budget: bare hull runs a trickle, each CELL adds a real tank
+  const bat = s.blocks.filter(b => b.type === 'battery').length;
+  s.emax = 30 + bat * 60;
+  s.eregen = 3 + bat * 4;
+  if (s.energy === undefined || s.energy > s.emax) s.energy = s.emax;
 }
 
 function makeShip(list, x, y, team, color, o = {}) {
@@ -406,7 +416,7 @@ function launch() {
     for (const [ax, ay] of apos) asteroids.push(makeAsteroid(ax + rand(-40, 40), ay + rand(-40, 40), rand(26, 58)));
     spawnRoamer();
     roamerT = 14;
-  } else { // 'station' — the original raid contract
+  } else if (mission === 'station') { // the original raid contract
     foes = [
       makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret']]), 750, -380, 'foe', '#ff8a7a'),
       makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 950, 380, 'foe', '#ff8a7a'),
@@ -428,6 +438,18 @@ function launch() {
     for (const [ax, ay] of apos) asteroids.push(makeAsteroid(ax + rand(-40, 40), ay + rand(-40, 40), rand(26, 58)));
     spawnRoamer(); spawnRoamer(); // fast movers already on the map
     roamerT = 14;
+  } else { // 'test' — firing range: dummies, no engines, no guns, no pay
+    station = noStation; planet = null;
+    foes = [
+      makeShip(gridFromList([[4,4,'hull'],[3,4,'hull'],[5,4,'hull'],[4,3,'armor'],[4,5,'armor']]), -250, -220, 'foe', '#8a8f9a'),
+      makeShip(gridFromList([[4,4,'armor'],[3,4,'hull'],[5,4,'hull'],[4,3,'hull'],[4,5,'armor'],[3,5,'hull'],[5,5,'hull']]), 350, 300, 'foe', '#8a8f9a'),
+      makeShip(gridFromList([[4,4,'armor'],[3,4,'armor'],[5,4,'armor'],[4,3,'armor'],[4,5,'armor'],[3,5,'armor'],[5,5,'armor'],[3,3,'armor'],[5,3,'armor']]), 950, -250, 'foe', '#8a8f9a'),
+    ];
+    for (const f of foes) f.role = 'dummy';
+    pods = [];
+    const apos = [[-100, -300], [200, 200], [450, -150]];
+    for (const [ax, ay] of apos) asteroids.push(makeAsteroid(ax, ay, rand(26, 40)));
+    waveT = 1e9; roamerT = 1e9; // quiet range — it's practice
   }
   bullets = []; particles = [];
   stars = [];
@@ -583,8 +605,8 @@ function autoFire(s, dt, forced) {
       for (const bu of bullets) if (bu.team !== s.team) { const d2 = Math.hypot(bu.x - p.x, bu.y - p.y); if (d2 < bd) { bd = d2; bb = bu; } }
       if (bb) {
         b.aim = Math.atan2(bb.y - p.y, bb.x - p.x);
-        if (b.cd <= 0) {
-          b.cd = 0.5;
+        if (b.cd <= 0 && s.energy >= 1) {
+          b.cd = 0.5; s.energy -= 1;
           bb.ttl = 0;
           explode(bb.x, bb.y, '#8ad4ff', 6);
           particles.push({ x: p.x + Math.cos(b.aim) * 14, y: p.y + Math.sin(b.aim) * 14, vx: rand(-20, 20), vy: rand(-20, 20), ttl: 0.15, max: 0.15, color: '#8ad4ff', r: 4 });
@@ -614,7 +636,8 @@ function autoFire(s, dt, forced) {
     // drops — armor needs a much longer burn than bare hull
     if (b.type === 'laser') {
       const dd = dist(p, t);
-      if (dd > 540) continue;
+      if (dd > 540 || s.energy <= 0) continue;
+      s.energy -= 10 * dt; // beam is a power hog
       const ex = p.x + Math.cos(b.aim) * dd, ey = p.y + Math.sin(b.aim) * dd;
       (s.beams = s.beams || []).push({ x1: p.x, y1: p.y, x2: ex, y2: ey });
       const hitObj = t.blocks ? t : (forced && forced.blocks ? forced : null);
@@ -639,7 +662,8 @@ function autoFire(s, dt, forced) {
     if (b.cd > 0) continue;
     // rocket pods reach farther and burst on a wider circle
     if (b.type === 'rocket') {
-      if (dist(p, t) > 900) continue;
+      if (dist(p, t) > 900 || s.energy < 5) continue;
+      s.energy -= 5;
       const tf = dist(p, t) / 280;
       const ax = t.x + (t.vx || 0) * tf - s.vx * tf;
       const ay = t.y + (t.vy || 0) * tf - s.vy * tf;
@@ -649,7 +673,8 @@ function autoFire(s, dt, forced) {
       particles.push({ x: p.x + Math.cos(a) * 16, y: p.y + Math.sin(a) * 16, vx: -Math.cos(a) * 50 + rand(-15, 15), vy: -Math.sin(a) * 50 + rand(-15, 15), ttl: 0.35, max: 0.35, color: '#ffb36e', r: 5 });
       continue;
     }
-    if (dist(p, t) > 640) continue;
+    if (dist(p, t) > 640 || s.energy < 2) continue;
+    s.energy -= 2;
     const tf = dist(p, t) / 400; // bullet flight time
     // aim where the target will be, minus our own drift — otherwise orbiting
     // ships throw every shot sideways past the target
@@ -1069,9 +1094,11 @@ function update(dt) {
   }
   // elite hunt: contract is done when the flagship dies — or gets boarded
   if (mission === 'hunt' && !won && elite && (!elite.alive || elite.team === 'ally')) won = true;
+  // test range: every dummy scrapped or husked (wrecks don't count)
+  if (mission === 'test' && !won && foes.every(f => !f.alive || f.wreck)) won = true;
 
   // contract payout — banked once, straight into the profile
-  if (won && !banked && mission !== 'station') {
+  if (won && !banked && (mission === 'belt' || mission === 'hunt')) {
     banked = true;
     const reward = mission === 'belt' ? { scrap: 60, ore: 15 } : { scrap: 140, ore: 30 };
     profile.scrap = (profile.scrap || 0) + reward.scrap;
@@ -1127,6 +1154,10 @@ function update(dt) {
   // heated blocks cool down — hold the beam on target or the metal re-freezes
   for (const s of [...allies, ...foes])
     for (const b of s.blocks) if (b.heat > 0) b.heat = Math.max(0, b.heat - 140 * dt);
+
+  // energy trickles back from the cells
+  for (const s of [...allies, ...foes])
+    if (s.alive && s.energy < s.emax) s.energy = Math.min(s.emax, s.energy + s.eregen * dt);
 
   // repair drones weld dead pixels back — slow, most damaged block first
   for (const s of [...allies, ...foes]) {
@@ -1499,6 +1530,14 @@ function drawEditor() {
   ctx.fillStyle = chk.ok ? '#9dff8a' : '#5a6a8a';
   ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
   ctx.fillText(chk.ok ? 'LAUNCH' : chk.why, launchBtn.x + launchBtn.w / 2, launchBtn.y + 29);
+  // test range — same build rules, targets are unarmed engineless dummies
+  testBtn.x = launchBtn.x + launchBtn.w + 14; testBtn.y = launchBtn.y; testBtn.h = launchBtn.h;
+  ctx.fillStyle = chk.ok ? '#12222e' : '#141c2e';
+  ctx.strokeStyle = chk.ok ? '#8ad4ff' : '#4a5a7a'; ctx.lineWidth = 2;
+  ctx.fillRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
+  ctx.strokeRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
+  ctx.fillStyle = chk.ok ? '#8ad4ff' : '#5a6a8a';
+  ctx.fillText('TEST RANGE', testBtn.x + testBtn.w / 2, testBtn.y + 29);
   ctx.textAlign = 'left';
 }
 
@@ -1757,8 +1796,10 @@ function draw() {
     ctx.fillStyle = '#c8a2ff'; ctx.fillRect(W - 176, 30, 160 * Math.max(0, station.coreHp / station.coreMax), 8);
   } else if (mission === 'belt') {
     ctx.fillText(`BELT SWEEP  KILLS ${foesDown}/${beltGoal}`, W - 16, 24);
-  } else {
+  } else if (mission === 'hunt') {
     ctx.fillText(`ELITE HUNT  ${elite && elite.alive ? 'FLAGSHIP ACTIVE' : 'FLAGSHIP DOWN'}`, W - 16, 24);
+  } else {
+    ctx.fillText(`TEST RANGE  TARGETS LEFT ${foes.filter(f => f.alive && !f.wreck).length}`, W - 16, 24);
   }
   ctx.textAlign = 'left';
 
@@ -1799,7 +1840,9 @@ function draw() {
   if (won) {
     const txt = mission === 'station'
       ? 'STATION DESTROYED — L: LAND ON PLANET   R: rebuild   ESC: base'
-      : 'CONTRACT COMPLETE — R: fly again   ESC: base';
+      : mission === 'test'
+        ? 'TEST COMPLETE — R: retest   ESC: base'
+        : 'CONTRACT COMPLETE — R: fly again   ESC: base';
     ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center';
     ctx.fillText(txt, W / 2, H / 2); ctx.textAlign = 'left';
   }
