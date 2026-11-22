@@ -100,6 +100,71 @@ const saveAccounts = () =>
   localStorage.setItem('vs_accounts', JSON.stringify(accounts));
 const saveSettings = () =>
   localStorage.setItem('vs_settings', JSON.stringify(SET));
+
+// ---------- i18n ----------
+const L = {
+  en: {
+    scrap: 'scrap', ore: 'ore', fuel: 'fuel',
+    m_tag: 'salvage  ·  build  ·  raid',
+    m_steam: 'LOGIN VIA STEAM', m_new: 'NEW PILOT', m_saved: 'SAVED PILOTS',
+    m_lvl: 'BASE LV', m_settings: 'SETTINGS', m_on: 'ON', m_off: 'OFF', m_lang: 'LANGUAGE',
+    b_title: 'ORBITAL BASE', b_lvl: 'LEVEL',
+    b_per_min: '/min', b_budget: 'build budget — base level + depots',
+    b_cmd: 'COMMAND', b_shipyard: 'SHIPYARD — build & launch',
+    b_contracts: 'CONTRACTS — CAMPAIGN', b_cleared: 'CLEARED', b_active: 'ACTIVE',
+    b_menu: 'BACK TO MENU', b_grid: 'BASE GRID', b_construct: 'CONSTRUCT',
+    b_raid: '!! PIRATE RAID INBOUND — DEFEND',
+    b_raid_sub: 'your buildings will fight — lose and one is damaged',
+    c_station: 'RAID THE STATION', c_belt: 'BELT SWEEP', c_hunt: 'ELITE HUNT',
+    c_convoy: 'ESCORT DUTY', c_tow: 'SALVAGE RUN', c_defense: 'BASE DEFENSE',
+    d_station: 'break the shield ring, kill the core, land on the planet',
+    d_belt: 'clear 12 hostiles out of the rock field — dodging required',
+    d_hunt: 'a pirate flagship and its escorts — bring real guns',
+    d_convoy: 'a fat hauler is crossing the belt — get it home in one piece',
+    d_tow: 'three dead hulks in the field — drag them to the beacon',
+    d_defense: 'pirates inbound — hold the line',
+    ed_back: '◄ BASE  (ESC)', ed_title: 'SHIPYARD',
+    ed_hint: 'LMB weld  ·  RMB rip off  ·  E erase-mode  ·  MMB pan  ·  wheel zoom  ·  X mirror  ·  Z undo  ·  H recenter',
+    ed_nose: 'NOSE', ed_parts: 'PARTS', ed_sel: 'selected',
+    ed_build: 'BUILD', ed_erase: 'ERASE', ed_mirror: 'MIRROR (X)', ed_mirron: 'MIRROR: ON',
+    ed_undo: 'UNDO (Z)', ed_clear: 'CLEAR', ed_fleet: 'FLEET',
+    ed_launch: 'LAUNCH', ed_test: 'TEST RANGE',
+    st_mass: 'mass', st_thrust: 'thrust', st_guns: 'guns', st_cost: 'cost', st_over: 'OVER BUDGET!',
+    why_empty: 'EMPTY HULL', why_hull: 'NEED HULL', why_engine: 'NEED ENGINE',
+    why_weapon: 'NEED A WEAPON', why_disconnected: 'HULL DISCONNECTED',
+  },
+  ru: {
+    scrap: 'лома', ore: 'руды', fuel: 'топлива',
+    m_tag: 'ломай  ·  строй  ·  громь',
+    m_steam: 'ВОЙТИ ЧЕРЕЗ STEAM', m_new: 'НОВЫЙ ПИЛОТ', m_saved: 'СОХРАНЁННЫЕ ПИЛОТЫ',
+    m_lvl: 'УР. БАЗЫ', m_settings: 'НАСТРОЙКИ', m_on: 'ВКЛ', m_off: 'ВЫКЛ', m_lang: 'ЯЗЫК',
+    b_title: 'ОРБИТАЛЬНАЯ БАЗА', b_lvl: 'УРОВЕНЬ',
+    b_per_min: '/мин', b_budget: 'бюджет постройки — уровень базы + склады',
+    b_cmd: 'КОМАНДА', b_shipyard: 'ВЕРФЬ — сборка и вылет',
+    b_contracts: 'КОНТРАКТЫ — КАМПАНИЯ', b_cleared: 'ПРОЙДЕНО', b_active: 'ВЫБРАН',
+    b_menu: 'В МЕНЮ', b_grid: 'СЕТКА БАЗЫ', b_construct: 'ПОСТРОИТЬ',
+    b_raid: '!! РЕЙД ПИРАТОВ — ОБОРОНА',
+    b_raid_sub: 'твои постройки будут драться — проиграешь, одна пострадает',
+    c_station: 'НАЛЁТ НА СТАНЦИЮ', c_belt: 'ЗАЧИСТКА ПОЯСА', c_hunt: 'ОХОТА НА ФЛАГМАН',
+    c_convoy: 'ЭСКОРТ КОНВОЯ', c_tow: 'СПАСЕНИЕ ОБЛОМКОВ', c_defense: 'ОБОРОНА БАЗЫ',
+    d_station: 'сними щитовое кольцо, убей ядро, садись на планету',
+    d_belt: 'зачисти 12 бандитов в поле астероидов — придётся уворачиваться',
+    d_hunt: 'пиратский флагман с эскортом — бери настоящие пушки',
+    d_convoy: 'жирная баржа идёт через пояс — доведи её целой',
+    d_tow: 'три мёртвых корпуса в поле — отбуксируй их на маяк',
+    d_defense: 'пираты на подходе — держи оборону',
+    ed_back: '◄ НА БАЗУ  (ESC)', ed_title: 'ВЕРФЬ',
+    ed_hint: 'ЛКМ ставить  ·  ПКМ срывать  ·  E режим срыва  ·  СКМ сдвиг  ·  колесо зум  ·  X зеркало  ·  Z отмена  ·  H к центру',
+    ed_nose: 'НОС', ed_parts: 'ДЕТАЛИ', ed_sel: 'выбрано',
+    ed_build: 'СТРОИТЬ', ed_erase: 'СРЫВАТЬ', ed_mirror: 'ЗЕРКАЛО (X)', ed_mirron: 'ЗЕРКАЛО: ВКЛ',
+    ed_undo: 'ОТМЕНА (Z)', ed_clear: 'СНЕСТИ', ed_fleet: 'ЭСКАДРА',
+    ed_launch: 'ВЫЛЕТ', ed_test: 'ПОЛИГОН',
+    st_mass: 'масса', st_thrust: 'тяга', st_guns: 'стволы', st_cost: 'цена', st_over: 'НЕ ХВАТАЕТ ЛОМА!',
+    why_empty: 'ПУСТОЙ КОРПУС', why_hull: 'НУЖЕН HULL', why_engine: 'НУЖЕН ДВИГАТЕЛЬ',
+    why_weapon: 'НУЖНО ОРУЖИЕ', why_disconnected: 'КОРПУС РАЗРВАН',
+  },
+};
+const T = k => (L[SET.lang] || L.en)[k] || L.en[k] || k;
 function saveProfile() {
   if (!profile) return;
   const i = accounts.findIndex(a => a.name === profile.name);
@@ -192,6 +257,8 @@ addEventListener('keydown', e => {
     if (e.code === 'Escape') { persistDesign(); mode = 'base'; return; }
     if (e.code === 'KeyZ') { if (undoStack.length) design = undoStack.pop(); return; }
     if (e.code === 'KeyX') { mirrorX = !mirrorX; return; }
+    if (e.code === 'KeyE') { editTool = editTool === 'erase' ? 'build' : 'erase'; return; }
+    if (e.code === 'KeyH') { ev.x = 0; ev.y = 0; ev.k = 1.7; return; }
     return;
   }
   if (mode === 'base' && e.code === 'Escape') { mode = 'menu'; return; }
@@ -237,6 +304,7 @@ addEventListener('mousedown', e => {
   if (mode === 'menu') { if (e.button === 0) menuClick(e.clientX, e.clientY); return; }
   if (mode === 'base') { if (e.button === 0) baseClick(e.clientX, e.clientY); return; }
   if (mode === 'editor') {
+    if (e.button === 1) { editPanning = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
     if (e.button !== 0 && e.button !== 2) return;
     if (editorUIClick(e.clientX, e.clientY)) return; // buttons ate the click
     startEditDrag(e.clientX, e.clientY, e.button === 2);
@@ -252,14 +320,30 @@ addEventListener('mousedown', e => {
 });
 addEventListener('mousemove', e => {
   mouse.x = e.clientX; mouse.y = e.clientY;
-  if (mode === 'editor' && editDrag) { editDragTo(e.clientX, e.clientY); return; }
+  if (mode === 'editor') {
+    if (editPanning) {
+      ev.x -= (e.clientX - editPanning.x) / ev.k;
+      ev.y -= (e.clientY - editPanning.y) / ev.k;
+      editPanning = { x: e.clientX, y: e.clientY };
+      return;
+    }
+    if (editDrag) { editDragTo(e.clientX, e.clientY); return; }
+  }
   if (!dragging || (mode !== 'flight' && mode !== 'planet')) return;
   cam.x -= (e.clientX - dragLast.x) / cam.zoom;
   cam.y -= (e.clientY - dragLast.y) / cam.zoom;
   dragLast = { x: e.clientX, y: e.clientY };
 });
-addEventListener('mouseup', () => { dragging = false; editDrag = null; });
+addEventListener('mouseup', () => { dragging = false; editDrag = null; editPanning = null; });
 addEventListener('wheel', e => {
+  if (mode === 'editor') {
+    const n = Math.max(0.6, Math.min(3, ev.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    ev.x += ((e.clientX - edCenter().x) / ev.k) * (1 - ev.k / n);
+    ev.y += ((e.clientY - edCenter().y) / ev.k) * (1 - ev.k / n);
+    ev.k = n;
+    e.preventDefault();
+    return;
+  }
   if (mode !== 'flight' && mode !== 'planet') return;
   const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
   const n = Math.max(0.4, Math.min(1.8, cam.zoom * k));
@@ -292,10 +376,28 @@ function defDesign(list) {
 
 const designCost = () => design.reduce((s, p) => s + TYPES[p.t].cost, 0);
 
-// ship preview area — the "workbench" surface. The design auto-centers on
-// its own centroid, so the build field is effectively unbounded — the base
-// level's build budget is the only limiter.
-const view = () => ({ x: W * 0.32, y: H * 0.52, k: 1.7 });
+// ---------- editor workbench ----------
+// FIXED grid — the design never auto-centers, parts stay exactly where you
+// welded them. Snap is a plain CS grid anchored at world origin; MMB drags
+// the camera, wheel zooms. LMB welds, RMB (or E-mode LMB) rips off.
+const ev = { x: 0, y: 0, k: 1.7 };
+const edCenter = () => ({ x: W * 0.30, y: H * 0.52 });
+const edToWorld = (mx, my) => {
+  const c = edCenter();
+  return { x: ev.x + (mx - c.x) / ev.k, y: ev.y + (my - c.y) / ev.k };
+};
+const edToScreen = (dx, dy) => {
+  const c = edCenter();
+  return { x: c.x + (dx - ev.x) * ev.k, y: c.y + (dy - ev.y) * ev.k };
+};
+
+const GRID_LIM = 10; // build area: ±10 cells around origin
+function snapPos(px, py) {
+  const gx = Math.round(px / CS), gy = Math.round(py / CS);
+  if (Math.abs(gx) > GRID_LIM || Math.abs(gy) > GRID_LIM) return null;
+  return { dx: gx * CS, dy: gy * CS };
+}
+
 function designCenter() {
   if (!design.length) return { dx: 0, dy: 0 };
   let dx = 0, dy = 0;
@@ -303,30 +405,8 @@ function designCenter() {
   return { dx: dx / design.length, dy: dy / design.length };
 }
 
-// where the part would land: flush-snap to a neighbor edge, else free offset
-function snapPos(px, py) {
-  if (!design.length) return { dx: Math.round(px / CS) * CS, dy: Math.round(py / CS) * CS }; // empty board seeds anywhere
-  let best = null, bd = CS * 0.8;
-  for (const p of design) {
-    for (const [ox, oy] of [[CS, 0], [-CS, 0], [0, CS], [0, -CS], [CS, CS], [CS, -CS], [-CS, CS], [-CS, -CS]]) {
-      const cx = p.dx + ox, cy = p.dy + oy, d = Math.hypot(px - cx, py - cy);
-      if (d < bd) { bd = d; best = { dx: cx, dy: cy }; }
-    }
-  }
-  if (best) return best;
-  // free placement — allowed only if it actually touches another part
-  for (const p of design) {
-    const d = Math.hypot(px - p.dx, py - p.dy);
-    if (d > CS * 0.55 && d < CS * 1.45)
-      return { dx: Math.round(px / 2) * 2, dy: Math.round(py / 2) * 2 };
-  }
-  return null;
-}
-
 // ---------- editor drag-building ----------
-// LMB paints parts as you drag, RMB (or grabbing a part) rips them off.
-// Z undoes, X mirrors every weld across the hull's centerline.
-let editDrag = null, mirrorX = false;
+let editDrag = null, editPanning = null, editTool = 'build', mirrorX = false, edBackRect = null;
 const undoStack = [];
 const pushUndo = () => { undoStack.push(deepCopy(design)); if (undoStack.length > 40) undoStack.shift(); };
 const toolRects = [];
@@ -339,38 +419,33 @@ function eraseAt(px, py) {
   const p = partAt(px, py);
   if (p) design.splice(design.indexOf(p), 1);
 }
-// weld the selected part at the snapped spot; in mirror mode the twin weld
-// lands symmetric about the hull's current centerline, which keeps the
-// design symmetric as long as you keep mirroring
+// weld on the grid cell under the cursor; mirror mode lands a twin weld on
+// the reflected cell across the fixed vertical centerline (dx = 0)
 function tryPlace(px, py) {
-  if (partAt(px, py)) return false;
-  const axis = design.length ? designCenter().dx : null;
   const sp = snapPos(px, py);
-  if (!sp || designCost() + TYPES[selected].cost > budget()) return false;
+  if (!sp || partAt(sp.dx, sp.dy)) return false;
+  if (designCost() + TYPES[selected].cost > budget()) return false;
   design.push({ dx: sp.dx, dy: sp.dy, t: selected });
-  if (mirrorX && axis !== null) {
-    const mdx = 2 * axis - sp.dx;
+  if (mirrorX) {
+    const mdx = -sp.dx;
     if (mdx !== sp.dx && !partAt(mdx, sp.dy) && designCost() + TYPES[selected].cost <= budget())
       design.push({ dx: mdx, dy: sp.dy, t: selected });
   }
   return true;
 }
-const editWorld = (mx, my) => {
-  const v = view(), ctr = designCenter();
-  return { x: (mx - v.x) / v.k + ctr.dx, y: (my - v.y) / v.k + ctr.dy };
-};
 function startEditDrag(mx, my, erase) {
   pushUndo();
-  const w = editWorld(mx, my);
-  editDrag = (erase || partAt(w.x, w.y)) ? 'erase' : 'paint';
+  editDrag = (erase || editTool === 'erase') ? 'erase' : 'paint';
+  const w = edToWorld(mx, my);
   if (editDrag === 'erase') eraseAt(w.x, w.y); else tryPlace(w.x, w.y);
 }
 function editDragTo(mx, my) {
-  const w = editWorld(mx, my);
+  const w = edToWorld(mx, my);
   if (editDrag === 'erase') eraseAt(w.x, w.y); else tryPlace(w.x, w.y);
 }
 
 function editorUIClick(mx, my) {
+  if (edBackRect && inRect(edBackRect, mx, my)) { persistDesign(); mode = 'base'; return true; }
   for (const k of KEYS_ORDER) {
     const r = palette[k];
     if (r && inRect(r, mx, my)) { selected = k; return true; }
@@ -406,16 +481,16 @@ function editorUIClick(mx, my) {
 
 function canLaunch() {
   const n = t => design.filter(x => x.t === t).length;
-  if (!design.length) return { ok: false, why: 'empty hull' };
-  if (!n('hull')) return { ok: false, why: 'need HULL' };
-  if (!n('engine')) return { ok: false, why: 'need ENGINE' };
-  if (!n('turret') && !n('rocket') && !n('laser') && !n('torp') && !n('rail')) return { ok: false, why: 'need a WEAPON' };
+  if (!design.length) return { ok: false, why: 'why_empty' };
+  if (!n('hull')) return { ok: false, why: 'why_hull' };
+  if (!n('engine')) return { ok: false, why: 'why_engine' };
+  if (!n('turret') && !n('rocket') && !n('laser') && !n('torp') && !n('rail')) return { ok: false, why: 'why_weapon' };
   // hull must be one welded piece — no floating sections
   const seen = new Set([design[0]]), q = [design[0]];
   for (let i = 0; i < q.length; i++)
     for (const p of design)
       if (!seen.has(p) && Math.hypot(p.dx - q[i].dx, p.dy - q[i].dy) <= CS * 1.5) { seen.add(p); q.push(p); }
-  if (seen.size < design.length) return { ok: false, why: 'HULL DISCONNECTED' };
+  if (seen.size < design.length) return { ok: false, why: 'why_disconnected' };
   return { ok: true };
 }
 
@@ -1670,7 +1745,7 @@ function drawMenu() {
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 42px monospace';
   ctx.fillText('VOID SALVAGE', cx, H * 0.2);
   ctx.fillStyle = '#5a6a8a'; ctx.font = '14px monospace';
-  ctx.fillText('salvage  ·  build  ·  raid', cx, H * 0.2 + 32);
+  ctx.fillText(T('m_tag'), cx, H * 0.2 + 32);
 
   const btn = (y, w, h, label, accent, fn) => {
     const r = { x: cx - w / 2, y, w, h };
@@ -1683,8 +1758,8 @@ function drawMenu() {
   };
 
   let y = H * 0.34;
-  btn(y, 320, 52, 'LOGIN VIA STEAM', '#7fd4ff', loginSteam); y += 68;
-  btn(y, 320, 44, 'NEW PILOT', '#9dff8a', () => {
+  btn(y, 320, 52, T('m_steam'), '#7fd4ff', loginSteam); y += 68;
+  btn(y, 320, 44, T('m_new'), '#9dff8a', () => {
     profile = { name: 'CMDR-' + Math.floor(rand(1000, 9999)), lvl: 1, scrap: 0, ore: 0, fuel: 0 };
     design = starterDesign();
     saveProfile();
@@ -1696,10 +1771,10 @@ function drawMenu() {
   const saved = accounts.filter(a => !a.steam);
   if (saved.length) {
     ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 14px monospace';
-    ctx.fillText('SAVED PILOTS', cx, y); y += 14;
+    ctx.fillText(T('m_saved'), cx, y); y += 14;
     for (const a of saved.slice(0, 4)) {
       y += 10;
-      btn(y, 320, 40, `${a.name}   ·   BASE LV ${a.lvl}`, '#8aa0c8', () => { profile = a; loadProfileDesign(); mode = 'base'; });
+      btn(y, 320, 40, `${a.name}   ·   ${T('m_lvl')} ${a.lvl}`, '#8aa0c8', () => { profile = a; loadProfileDesign(); mode = 'base'; });
       y += 50;
     }
   }
@@ -1707,12 +1782,13 @@ function drawMenu() {
   // settings
   y += 16;
   ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 14px monospace';
-  ctx.fillText('SETTINGS', cx, y); y += 16;
+  ctx.fillText(T('m_settings'), cx, y); y += 16;
   for (const k of ['fx', 'stars', 'grid']) {
     const on = SET[k];
-    btn(y, 200, 34, `${k.toUpperCase()}  ${on ? 'ON' : 'OFF'}`, on ? '#9dff8a' : '#5a6a8a', () => { SET[k] = !SET[k]; saveSettings(); });
+    btn(y, 200, 34, `${k.toUpperCase()}  ${on ? T('m_on') : T('m_off')}`, on ? '#9dff8a' : '#5a6a8a', () => { SET[k] = !SET[k]; saveSettings(); });
     y += 44;
   }
+  btn(y, 200, 34, `${T('m_lang')}  ${(SET.lang || 'en').toUpperCase()}`, '#ffcf6e', () => { SET.lang = SET.lang === 'ru' ? 'en' : 'ru'; saveSettings(); });
   ctx.textAlign = 'left';
 }
 
@@ -1723,21 +1799,21 @@ function drawBase() {
   const cx = W / 2;
   ctx.textAlign = 'center';
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 30px monospace';
-  ctx.fillText('ORBITAL BASE', cx, H * 0.10);
+  ctx.fillText(T('b_title'), cx, H * 0.10);
   ctx.fillStyle = '#ffcf6e'; ctx.font = 'bold 18px monospace';
-  ctx.fillText(`LEVEL ${profile?.lvl ?? 1}`, cx, H * 0.10 + 34);
+  ctx.fillText(`${T('b_lvl')} ${profile?.lvl ?? 1}`, cx, H * 0.10 + 34);
   const prod = { ore: 0, scrap: 0 };
   for (const b of profile.base) if (b && BUILDINGS[b.t].rate) prod[BUILDINGS[b.t].res] += BUILDINGS[b.t].rate * b.lvl;
   ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
-  ctx.fillText(`scrap ${Math.floor(profile?.scrap ?? 0) + Math.floor(salvage)}   ore ${Math.floor(profile?.ore ?? 0)}   fuel ${profile?.fuel ?? 0}   —   +${prod.scrap} scrap +${prod.ore} ore /min`, cx, H * 0.10 + 60);
-  ctx.fillText(`build budget ${budget()} — base level + depots`, cx, H * 0.10 + 82);
+  ctx.fillText(`${T('scrap')} ${Math.floor(profile?.scrap ?? 0) + Math.floor(salvage)}   ${T('ore')} ${Math.floor(profile?.ore ?? 0)}   ${T('fuel')} ${profile?.fuel ?? 0}   —   +${prod.scrap} +${prod.ore} ${T('b_per_min')}`, cx, H * 0.10 + 60);
+  ctx.fillText(`${T('b_budget')}: ${budget()}`, cx, H * 0.10 + 82);
 
   // ---- left column: command ----
   const lx = W * 0.5 - 540, lw = 430;
   let y = H * 0.24;
   ctx.textAlign = 'left';
   ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
-  ctx.fillText('COMMAND', lx, y); y += 12;
+  ctx.fillText(T('b_cmd'), lx, y); y += 12;
   const lbtn = (label, accent, h, fn, sub) => {
     const r = { x: lx, y, w: lw, h };
     baseRects.push({ r, fn });
@@ -1748,10 +1824,10 @@ function drawBase() {
     if (sub) { ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace'; ctx.fillText(sub, r.x + 16, r.y + 40); }
     y += h + 10;
   };
-  lbtn('SHIPYARD — build & launch', '#9dff8a', 46, () => { mode = 'editor'; });
+  lbtn(T('b_shipyard'), '#9dff8a', 46, () => { mode = 'editor'; });
   y += 8;
   ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
-  ctx.fillText(`CONTRACTS — CAMPAIGN ${threat()}/${CAMPAIGN_KEYS.length}`, lx, y); y += 10;
+  ctx.fillText(`${T('b_contracts')} ${threat()}/${CAMPAIGN_KEYS.length}`, lx, y); y += 10;
   for (const k of Object.keys(CONTRACTS)) {
     const c = CONTRACTS[k];
     if (c.hidden) continue;
@@ -1764,14 +1840,14 @@ function drawBase() {
     ctx.strokeStyle = sel ? c.accent : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.fillStyle = c.accent; ctx.font = 'bold 13px monospace';
-    ctx.fillText(`${c.name}${sel ? '  — ACTIVE' : ''}`, r.x + 16, y + 20);
+    ctx.fillText(`${T('c_' + k) !== 'c_' + k ? T('c_' + k) : c.name}${sel ? '  — ' + T('b_active') : ''}`, r.x + 16, y + 20);
     if (done) {
       ctx.fillStyle = '#9dff8a'; ctx.textAlign = 'right';
-      ctx.fillText('CLEARED', r.x + r.w - 14, y + 20);
+      ctx.fillText(T('b_cleared'), r.x + r.w - 14, y + 20);
       ctx.textAlign = 'left';
     }
     ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace';
-    ctx.fillText(c.desc, r.x + 16, y + 38);
+    ctx.fillText(T('d_' + k) !== 'd_' + k ? T('d_' + k) : c.desc, r.x + 16, y + 38);
     y += 62;
   }
   // pirates picked up your base on their scopes — fight or lose a building
@@ -1785,18 +1861,18 @@ function drawBase() {
     ctx.fillStyle = `rgba(60,10,10,${pulse})`; ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeStyle = '#ff5a4a'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 15px monospace';
-    ctx.fillText('!! PIRATE RAID INBOUND — DEFEND', r.x + 16, y + 22);
+    ctx.fillText(T('b_raid'), r.x + 16, y + 22);
     ctx.fillStyle = '#c8a09a'; ctx.font = '11px monospace';
-    ctx.fillText('your buildings will fight — lose and one is damaged', r.x + 16, y + 40);
+    ctx.fillText(T('b_raid_sub'), r.x + 16, y + 40);
     y += 64;
   }
-  lbtn('BACK TO MENU', '#5a6a8a', 44, () => { mode = 'menu'; });
+  lbtn(T('b_menu'), '#5a6a8a', 44, () => { mode = 'menu'; });
 
   // ---- right column: the base itself, 12 build slots ----
   const gx = W * 0.5 - 20, gy = H * 0.24, cw = 118, ch = 92, gap = 10;
   ctx.textAlign = 'left';
   ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
-  ctx.fillText('BASE GRID', gx, gy - 14);
+  ctx.fillText(T('b_grid'), gx, gy - 14);
   for (let i = 0; i < 12; i++) {
     const col = i % 4, row = Math.floor(i / 4);
     const r = { x: gx + col * (cw + gap), y: gy + row * (ch + gap), w: cw, h: ch };
@@ -1828,7 +1904,7 @@ function drawBase() {
     const py = gy + 3 * (ch + gap) + 12;
     if (!b) {
       ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 13px monospace';
-      ctx.fillText('CONSTRUCT', gx, py - 4);
+      ctx.fillText(T('b_construct'), gx, py - 4);
       let bx = gx, bi = 0;
       for (const k of Object.keys(BUILDINGS)) {
         const spec = BUILDINGS[k], cost = spec.cost(0), afford = (profile.scrap || 0) >= cost;
@@ -1870,177 +1946,202 @@ function drawBase() {
 // ---------- draw: editor ----------
 function drawEditor() {
   ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
-  const v = view();
-  const gs = { x: v.x - 260, y: 60 }; // anchor for labels/stats
+  const c = edCenter(), ds = CS * ev.k;
+  // right panel starts right of the build field
+  const px = Math.max(W * 0.62, c.x + (GRID_LIM + 1) * ds + 30);
+  const pw = W - px - 16;
+
+  // ---------- header: back + title ----------
+  edBackRect = { x: 16, y: 14, w: 190, h: 36 };
+  ctx.fillStyle = '#0b1220'; ctx.fillRect(edBackRect.x, edBackRect.y, edBackRect.w, edBackRect.h);
+  ctx.strokeStyle = '#8aa0c8'; ctx.lineWidth = 1.5; ctx.strokeRect(edBackRect.x, edBackRect.y, edBackRect.w, edBackRect.h);
+  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(T('ed_back'), edBackRect.x + edBackRect.w / 2, edBackRect.y + 23);
+  ctx.textAlign = 'left';
 
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 20px monospace';
-  ctx.fillText(`SHIPYARD — ${(CONTRACTS[mission] || {}).name || 'TEST RANGE'}`, gs.x, gs.y - 46);
-  ctx.fillStyle = '#5a6a8a'; ctx.font = '13px monospace';
-  ctx.fillText('LMB drag: weld on   RMB / drag a part: rip off   X: mirror   Z: undo   S-chip: save blueprint', gs.x, gs.y - 24);
+  ctx.fillText(`${T('ed_title')} — ${T('c_' + mission) !== 'c_' + mission ? T('c_' + mission) : ((CONTRACTS[mission] || {}).name || T('ed_test'))}`, 220, 38);
+  ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
+  ctx.fillText(T('ed_hint'), 220, 58);
 
-  // workbench surface
-  ctx.fillStyle = '#0b1220';
-  ctx.fillRect(v.x - 320, v.y - 260, 640, 520);
-  ctx.strokeStyle = '#1a2438'; ctx.strokeRect(v.x - 320, v.y - 260, 640, 520);
-  ctx.strokeStyle = 'rgba(60,80,120,0.15)';
-  for (let gx = -280; gx <= 280; gx += 44) { ctx.beginPath(); ctx.moveTo(v.x + gx, v.y - 260); ctx.lineTo(v.x + gx, v.y + 260); ctx.stroke(); }
-  for (let gy = -240; gy <= 240; gy += 44) { ctx.beginPath(); ctx.moveTo(v.x - 320, v.y + gy); ctx.lineTo(v.x + 320, v.y + gy); ctx.stroke(); }
+  // ---------- workbench: fixed grid around world origin ----------
+  const x0 = c.x + (-GRID_LIM - 0.5 - ev.x) * ev.k, x1 = c.x + (GRID_LIM + 0.5 - ev.x) * ev.k;
+  const y0 = c.y + (-GRID_LIM - 0.5 - ev.y) * ev.k, y1 = c.y + (GRID_LIM + 0.5 - ev.y) * ev.k;
+  ctx.fillStyle = '#0b1220'; ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+  ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+  // cell lines — aligned with the real snap grid
+  ctx.strokeStyle = 'rgba(60,80,120,0.18)'; ctx.lineWidth = 1;
+  for (let g = -GRID_LIM; g <= GRID_LIM + 1; g++) {
+    const sx = c.x + (g - 0.5 - ev.x) * ev.k, sy = c.y + (g - 0.5 - ev.y) * ev.k;
+    ctx.beginPath(); ctx.moveTo(sx, Math.min(y0, y1)); ctx.lineTo(sx, Math.max(y0, y1)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(Math.min(x0, x1), sy); ctx.lineTo(Math.max(x0, x1), sy); ctx.stroke();
+  }
+  // axes through origin — brighter, dy=0 line is also the mirror axis
+  const ox = c.x - ev.x * ev.k, oy = c.y - ev.y * ev.k;
+  ctx.strokeStyle = mirrorX ? 'rgba(200,162,255,0.55)' : 'rgba(127,212,255,0.3)'; ctx.lineWidth = 1.5;
+  if (mirrorX) ctx.setLineDash([4, 6]);
+  ctx.beginPath(); ctx.moveTo(ox, Math.min(y0, y1)); ctx.lineTo(ox, Math.max(y0, y1)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(127,212,255,0.2)';
+  ctx.beginPath(); ctx.moveTo(Math.min(x0, x1), oy); ctx.lineTo(Math.max(x0, x1), oy); ctx.stroke();
+  if (mirrorX) { ctx.fillStyle = '#c8a2ff'; ctx.font = 'bold 11px monospace'; ctx.fillText('MIRROR', ox + 8, Math.min(y0, y1) + 16); }
+  // nose marker — ships fly toward +dx (right on screen, engines go left)
+  ctx.fillStyle = 'rgba(127,212,255,0.5)'; ctx.font = 'bold 11px monospace';
+  ctx.fillText(T('ed_nose') + ' ►', ox + 8, oy - 10);
 
-  const ds = CS * v.k, ctr = designCenter();
   const drawPart = (dx, dy, t, ghost) => {
-    const x = v.x + (dx - ctr.dx) * v.k, y = v.y + (dy - ctr.dy) * v.k;
+    const s = edToScreen(dx, dy);
     ctx.globalAlpha = ghost ? 0.45 : 1;
     const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
-    if (sprReady(spr)) ctx.drawImage(spr, x - ds / 2, y - ds / 2, ds, ds);
-    else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(x - ds / 2, y - ds / 2, ds, ds); }
-    if (t === 'turret' && sprReady(SPRITES.gun_barrel)) ctx.drawImage(SPRITES.gun_barrel, x - ds / 2, y - ds / 2, ds, ds);
+    if (sprReady(spr)) ctx.drawImage(spr, s.x - ds / 2, s.y - ds / 2, ds, ds);
+    else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(s.x - ds / 2, s.y - ds / 2, ds, ds); }
+    if (t === 'turret' && sprReady(SPRITES.gun_barrel)) ctx.drawImage(SPRITES.gun_barrel, s.x - ds / 2, s.y - ds / 2, ds, ds);
     ctx.globalAlpha = 1;
   };
   for (const p of design) drawPart(p.dx, p.dy, p.t, false);
 
-  // mirror centerline + ghost preview — shows exactly where welds land
-  if (mirrorX) {
-    ctx.strokeStyle = 'rgba(200,162,255,0.4)'; ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 6]);
-    ctx.beginPath(); ctx.moveTo(v.x, v.y - 260); ctx.lineTo(v.x, v.y + 260); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#c8a2ff'; ctx.font = 'bold 11px monospace';
-    ctx.fillText('MIRROR', v.x + 8, v.y - 244);
-  }
+  // ghost preview — red frame on an existing part (rip-off), else weld ghost
   {
-    const px = (mouse.x - v.x) / v.k + ctr.dx, py = (mouse.y - v.y) / v.k + ctr.dy;
-    const hp2 = partAt(px, py);
+    const w = edToWorld(mouse.x, mouse.y), hp2 = partAt(w.x, w.y);
     if (hp2) {
-      // hovering a part — it rips off under RMB or a drag
-      const x = v.x + (hp2.dx - ctr.dx) * v.k, y = v.y + (hp2.dy - ctr.dy) * v.k;
+      const s = edToScreen(hp2.dx, hp2.dy);
       ctx.strokeStyle = 'rgba(255,110,92,0.85)'; ctx.lineWidth = 2;
-      ctx.strokeRect(x - ds / 2, y - ds / 2, ds, ds);
-      ctx.beginPath(); ctx.moveTo(x - 7, y - 7); ctx.lineTo(x + 7, y + 7);
-      ctx.moveTo(x + 7, y - 7); ctx.lineTo(x - 7, y + 7); ctx.stroke();
+      ctx.strokeRect(s.x - ds / 2, s.y - ds / 2, ds, ds);
+      ctx.beginPath(); ctx.moveTo(s.x - 7, s.y - 7); ctx.lineTo(s.x + 7, s.y + 7);
+      ctx.moveTo(s.x + 7, s.y - 7); ctx.lineTo(s.x - 7, s.y + 7); ctx.stroke();
     } else {
-      const sp = snapPos(px, py), afford = designCost() + TYPES[selected].cost <= budget();
-      if (sp && !afford) {
-        const x = v.x + (sp.dx - ctr.dx) * v.k, y = v.y + (sp.dy - ctr.dy) * v.k;
-        ctx.globalAlpha = 0.35; ctx.fillStyle = '#ff6e5c';
-        ctx.fillRect(x - ds / 2, y - ds / 2, ds, ds); ctx.globalAlpha = 1;
-      } else if (sp) {
-        drawPart(sp.dx, sp.dy, selected, true);
-        if (mirrorX && design.length) {
-          const axis = designCenter().dx, mdx = 2 * axis - sp.dx;
-          if (mdx !== sp.dx && !partAt(mdx, sp.dy)) drawPart(mdx, sp.dy, selected, true);
+      const sp = snapPos(w.x, w.y), afford = designCost() + TYPES[selected].cost <= budget();
+      if (sp) {
+        if (!afford) {
+          const s = edToScreen(sp.dx, sp.dy);
+          ctx.globalAlpha = 0.35; ctx.fillStyle = '#ff6e5c';
+          ctx.fillRect(s.x - ds / 2, s.y - ds / 2, ds, ds); ctx.globalAlpha = 1;
+        } else {
+          drawPart(sp.dx, sp.dy, selected, true);
+          const mdx = -sp.dx;
+          if (mirrorX && mdx !== sp.dx && !partAt(mdx, sp.dy)) drawPart(mdx, sp.dy, selected, true);
         }
       }
     }
   }
 
-  // palette
-  const px = W * 0.66, pw = 150;
+  // ---------- right panel ----------
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
-  ctx.fillText('PARTS', px, gs.y - 10);
+  ctx.fillText(T('ed_parts'), px, 34);
+
+  // parts palette — compact icon tiles, as many columns as fit
+  const tw = 60, th = 62, cols = Math.max(2, Math.floor(pw / (tw + 6)));
   KEYS_ORDER.forEach((k, i) => {
-    const col = i % 2, row = Math.floor(i / 2);
-    const r = { x: px + col * (pw + 8), y: gs.y + row * 44, w: pw, h: 40 };
+    const r = { x: px + (i % cols) * (tw + 6), y: 46 + Math.floor(i / cols) * (th + 6), w: tw, h: th };
     palette[k] = r;
-    const T = TYPES[k], sel = selected === k;
+    const T2 = TYPES[k], sel = selected === k;
     ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
     ctx.fillRect(r.x, r.y, r.w, r.h);
-    ctx.strokeStyle = sel ? T.edge : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeStyle = sel ? T2.edge : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     const spr = k === 'turret' ? SPRITES.gun_base : SPRITES[k];
-    if (sprReady(spr)) ctx.drawImage(spr, r.x + 8, r.y + 9, 26, 26);
-    else { ctx.fillStyle = T.color; ctx.fillRect(r.x + 10, r.y + 12, 20, 20); }
-    ctx.fillStyle = T.edge; ctx.font = 'bold 12px monospace';
-    ctx.fillText(T.name, r.x + 42, r.y + 20);
-    ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace';
-    ctx.fillText(`${T.cost} scrap`, r.x + 42, r.y + 36);
+    if (sprReady(spr)) ctx.drawImage(spr, r.x + tw / 2 - 15, r.y + 5, 30, 30);
+    else { ctx.fillStyle = T2.color; ctx.fillRect(r.x + tw / 2 - 12, r.y + 8, 24, 24); }
+    ctx.fillStyle = T2.edge; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(T2.name, r.x + tw / 2, r.y + th - 17);
+    ctx.fillStyle = '#5a6a8a'; ctx.font = '9px monospace';
+    ctx.fillText(T2.cost + ' ' + T('scrap'), r.x + tw / 2, r.y + th - 6);
   });
+  ctx.textAlign = 'left';
 
-  // wingmen roster — two columns
-  const ry0 = gs.y + Math.ceil(KEYS_ORDER.length / 2) * 44 + 22;
-  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
-  ctx.fillText(`FLEET  (${rosterSel.size}/${wingCap()})`, px, ry0 - 10);
-  ROSTER.forEach((r, i) => {
-    const col = i % 2, row = Math.floor(i / 2);
-    const rc = { x: px + col * 175, y: ry0 + row * 60, w: 165, h: 52 };
-    rosterRects[i] = rc;
-    const sel = rosterSel.has(i);
-    ctx.fillStyle = sel ? '#14261c' : '#0b1220';
-    ctx.fillRect(rc.x, rc.y, rc.w, rc.h);
-    ctx.strokeStyle = sel ? '#9dff8a' : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
-    ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
-    // mini layout preview — sprites, not colored squares
-    for (const [rr, cc, t] of r.g) {
-      const mx = rc.x + 6 + (cc - 1) * 9, my = rc.y + 8 + (rr - 2) * 9;
-      const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
-      if (sprReady(spr)) ctx.drawImage(spr, mx, my, 8, 8);
-      else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(mx, my, 7, 7); }
-    }
-    ctx.fillStyle = sel ? '#9dff8a' : '#8aa0c8'; ctx.font = 'bold 11px monospace';
-    ctx.fillText(r.name, rc.x + 52, rc.y + 22);
-    ctx.fillStyle = '#5a6a8a'; ctx.font = '10px monospace';
-    ctx.fillText(r.desc, rc.x + 52, rc.y + 40);
+  // selected part name line
+  const py0 = 46 + Math.ceil(KEYS_ORDER.length / cols) * (th + 6) + 8;
+  ctx.fillStyle = TYPES[selected].edge; ctx.font = 'bold 13px monospace';
+  ctx.fillText(`▸ ${TYPES[selected].name} — ${TYPES[selected].cost} ${T('scrap')}   ${T('ed_sel')}`, px, py0);
+
+  // tools row — build/erase toggle, mirror, undo, clear
+  toolRects.length = 0;
+  const ty = py0 + 10, tbw = Math.floor((pw - 18) / 4);
+  const toolDefs = [
+    { label: () => editTool === 'erase' ? T('ed_erase') : T('ed_build'), accent: editTool === 'erase' ? '#ff8a7a' : '#9dff8a', fn: () => { editTool = editTool === 'erase' ? 'build' : 'erase'; } },
+    { label: () => mirrorX ? T('ed_mirron') : T('ed_mirror'), accent: '#c8a2ff', fn: () => { mirrorX = !mirrorX; } },
+    { label: T('ed_undo'), accent: '#8ad4ff', fn: () => { if (undoStack.length) design = undoStack.pop(); } },
+    { label: T('ed_clear'), accent: '#ff8a7a', fn: () => { pushUndo(); design = []; } },
+  ];
+  toolDefs.forEach((t, i) => {
+    const r = { x: px + i * (tbw + 6), y: ty, w: tbw, h: 30 };
+    toolRects.push({ r, fn: t.fn });
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = t.accent; ctx.lineWidth = 1.5; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = t.accent; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(typeof t.label === 'function' ? t.label() : t.label, r.x + r.w / 2, r.y + 19);
   });
+  ctx.textAlign = 'left';
 
-  // stats
-  const n = t => design.filter(x => x.t === t).length;
-  const mass = design.length, eng = n('engine');
-  const sy = v.y + 290;
-  ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
-  ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${designCost()}/${Math.floor(budget())}${salvage ? '  (+' + salvage.toFixed(1) + ' salvaged)' : ''}`, v.x - 320, sy);
-
-  const chk = canLaunch();
-  launchBtn.x = px; launchBtn.y = ry0 + Math.ceil(ROSTER.length / 2) * 60 + 8;
-  ctx.fillStyle = chk.ok ? '#1d3a24' : '#141c2e';
-  ctx.strokeStyle = chk.ok ? '#9dff8a' : '#4a5a7a'; ctx.lineWidth = 2;
-  ctx.fillRect(launchBtn.x, launchBtn.y, launchBtn.w, launchBtn.h);
-  ctx.strokeRect(launchBtn.x, launchBtn.y, launchBtn.w, launchBtn.h);
-  ctx.fillStyle = chk.ok ? '#9dff8a' : '#5a6a8a';
-  ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
-  ctx.fillText(chk.ok ? 'LAUNCH' : chk.why, launchBtn.x + launchBtn.w / 2, launchBtn.y + 29);
-  // test range — same build rules, targets are unarmed engineless dummies
-  testBtn.x = launchBtn.x + launchBtn.w + 14; testBtn.y = launchBtn.y; testBtn.h = launchBtn.h;
-  ctx.fillStyle = chk.ok ? '#12222e' : '#141c2e';
-  ctx.strokeStyle = chk.ok ? '#8ad4ff' : '#4a5a7a'; ctx.lineWidth = 2;
-  ctx.fillRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
-  ctx.strokeRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
-  ctx.fillStyle = chk.ok ? '#8ad4ff' : '#5a6a8a';
-  ctx.fillText('TEST RANGE', testBtn.x + testBtn.w / 2, testBtn.y + 29);
-
-  // blueprint slots — keep alternate builds in the profile
+  // blueprint slots
   profile.bps = profile.bps || [null, null, null];
   bpRects.length = 0;
-  const bw2 = 116, by = launchBtn.y + launchBtn.h + 10;
+  const bw2 = Math.floor((pw - 12) / 3), by = ty + 40;
   for (let i = 0; i < 3; i++) {
-    const r = { x: px + i * (bw2 + 8), y: by, w: bw2 - 26, h: 32 };
-    const sr = { x: r.x + r.w, y: by, w: 26, h: 32 };
+    const r = { x: px + i * (bw2 + 6), y: by, w: bw2 - 24, h: 30 };
+    const sr = { x: r.x + r.w, y: by, w: 24, h: 30 };
     bpRects.push({ r, sr, i });
     const full = profile.bps[i];
     ctx.fillStyle = full ? '#141c2e' : '#0b1220';
     ctx.strokeStyle = full ? '#8ad4ff' : '#3a4a6a'; ctx.lineWidth = 1.5;
     ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.fillStyle = full ? '#8ad4ff' : '#4a5a7a';
-    ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(full ? `BP${i + 1} · ${full.length}p` : `BP${i + 1} empty`, r.x + r.w / 2, r.y + 20);
+    ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(full ? `BP${i + 1} · ${full.length}p` : `BP${i + 1}`, r.x + r.w / 2, r.y + 19);
     ctx.fillStyle = '#1d3a24'; ctx.fillRect(sr.x, sr.y, sr.w, sr.h);
     ctx.strokeStyle = '#9dff8a'; ctx.strokeRect(sr.x, sr.y, sr.w, sr.h);
-    ctx.fillStyle = '#9dff8a'; ctx.fillText('S', sr.x + 13, sr.y + 21);
+    ctx.fillStyle = '#9dff8a'; ctx.fillText('S', sr.x + 12, sr.y + 20);
   }
+  ctx.textAlign = 'left';
 
-  // build toolbar — undo, mirror, wipe
-  toolRects.length = 0;
-  const toolDefs = [
-    { label: 'UNDO (Z)', accent: '#8ad4ff', fn: () => { if (undoStack.length) design = undoStack.pop(); } },
-    { label: () => mirrorX ? 'MIRROR: ON (X)' : 'MIRROR (X)', accent: '#c8a2ff', fn: () => { mirrorX = !mirrorX; } },
-    { label: 'CLEAR', accent: '#ff8a7a', fn: () => { pushUndo(); design = []; } },
-  ];
-  toolDefs.forEach((t, i) => {
-    const r = { x: px + i * (bw2 + 8), y: by + 40, w: bw2, h: 30 };
-    toolRects.push({ r, fn: t.fn });
-    ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
-    ctx.strokeStyle = t.accent; ctx.lineWidth = 1.5; ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = t.accent; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(typeof t.label === 'function' ? t.label() : t.label, r.x + r.w / 2, r.y + 19);
+  // fleet roster — compact chips under the blueprint row
+  const ry0 = by + 48;
+  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 12px monospace';
+  ctx.fillText(`${T('ed_fleet')} (${rosterSel.size}/${wingCap()})`, px, ry0 - 8);
+  const rw = Math.floor((pw - 12) / 3);
+  ROSTER.forEach((r, i) => {
+    const rc = { x: px + (i % 3) * (rw + 6), y: ry0 + Math.floor(i / 3) * 28, w: rw, h: 24 };
+    rosterRects[i] = rc;
+    const sel = rosterSel.has(i);
+    ctx.fillStyle = sel ? '#14261c' : '#0b1220';
+    ctx.fillRect(rc.x, rc.y, rc.w, rc.h);
+    ctx.strokeStyle = sel ? '#9dff8a' : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
+    for (const [rr, cc, t] of r.g.slice(0, 6)) {
+      const mx = rc.x + 3 + (cc - 1) * 5, my = rc.y + 4 + (rr - 2) * 5;
+      const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
+      if (sprReady(spr)) ctx.drawImage(spr, mx, my, 4, 4);
+      else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(mx, my, 4, 4); }
+    }
+    ctx.fillStyle = sel ? '#9dff8a' : '#8aa0c8'; ctx.font = 'bold 9px monospace';
+    ctx.fillText(r.name, rc.x + 34, rc.y + 16);
   });
+
+  // ---------- bottom pinned: stats + launch ----------
+  const n = t => design.filter(x => x.t === t).length;
+  const mass = design.length, eng = n('engine');
+  ctx.fillStyle = '#8aa0c8'; ctx.font = '13px monospace';
+  ctx.fillText(`${T('st_mass')} ${mass}   ${T('st_thrust')} ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   ${T('st_guns')} ${n('turret') + n('rail') + n('rocket')}   ${T('st_cost')} ${designCost()}/${Math.floor(budget())} ${T('scrap')}${salvage ? '  (+' + salvage.toFixed(1) + ')' : ''}`, px, H - 108);
+  if (designCost() > budget()) { ctx.fillStyle = '#ff6e5c'; ctx.fillText(T('st_over'), px, H - 90); }
+
+  const chk = canLaunch();
+  const ly = H - 56;
+  launchBtn.x = px; launchBtn.y = ly; launchBtn.w = Math.floor(pw * 0.52); launchBtn.h = 44;
+  testBtn.x = launchBtn.x + launchBtn.w + 8; testBtn.y = ly; testBtn.w = pw - launchBtn.w - 8; testBtn.h = 44;
+  ctx.fillStyle = chk.ok ? '#1d3a24' : '#141c2e';
+  ctx.strokeStyle = chk.ok ? '#9dff8a' : '#4a5a7a'; ctx.lineWidth = 2;
+  ctx.fillRect(launchBtn.x, launchBtn.y, launchBtn.w, launchBtn.h);
+  ctx.strokeRect(launchBtn.x, launchBtn.y, launchBtn.w, launchBtn.h);
+  ctx.fillStyle = chk.ok ? '#9dff8a' : '#5a6a8a';
+  ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(chk.ok ? T('ed_launch') : T(chk.why), launchBtn.x + launchBtn.w / 2, launchBtn.y + 28);
+  ctx.fillStyle = chk.ok ? '#12222e' : '#141c2e';
+  ctx.strokeStyle = chk.ok ? '#8ad4ff' : '#4a5a7a'; ctx.lineWidth = 2;
+  ctx.fillRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
+  ctx.strokeRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
+  ctx.fillStyle = chk.ok ? '#8ad4ff' : '#5a6a8a';
+  ctx.fillText(T('ed_test'), testBtn.x + testBtn.w / 2, testBtn.y + 28);
   ctx.textAlign = 'left';
 }
 
