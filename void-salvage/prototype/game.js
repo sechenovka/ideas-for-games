@@ -18,22 +18,34 @@ const BUDGET = 16;          // scrap points for the editor
 const MAX_WING = 2;         // max escort ships you can bring
 const TYPES = {
   hull:   { cost: 1, hp: 45, color: '#4a6a9a', edge: '#6e92c8', name: 'HULL' },
+  armor:  { cost: 2, hp: 70, color: '#4a4e55', edge: '#9aa2ad', name: 'ARMOR' },
   engine: { cost: 2, hp: 30, color: '#7a4a2a', edge: '#ff9d5c', name: 'ENGINE' },
   turret: { cost: 3, hp: 28, color: '#2a4a5e', edge: '#7fd4ff', name: 'GUN' },
+  rocket: { cost: 4, hp: 26, color: '#6e3a2a', edge: '#ff8a5c', name: 'ROCKET' },
+  cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
+  gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'engine', 'turret'];
-const BP = 6; // per-block pixel grid — blocks die pixel by pixel
-const DEBRIS_COL = { hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30', turret: '#3d4f63' };
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'cargo', 'gyro'];
+const BP = 10; // per-block pixel grid — blocks die pixel by pixel
+const DEBRIS_COL = {
+  hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
+  turret: '#3d4f63', armor: '#6a7078', rocket: '#7a4a3a', cargo: '#a0762a',
+  gyro: '#2a8a6a',
+};
 // escort roster — pick up to MAX_WING
 const ROSTER = [
   { name: 'SCOUT',   desc: 'fast, 1 gun',  color: '#9dff8a', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'turret']] },
   { name: 'GUNSHIP', desc: '2 guns',       color: '#7fd4ff', g: [[4,3,'engine'],[4,4,'hull'],[3,4,'hull'],[5,4,'hull'],[4,5,'turret'],[3,5,'turret']] },
-  { name: 'BULWARK', desc: 'armored',      color: '#ffcf6e', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[5,5,'hull'],[4,6,'hull']] },
+  { name: 'BULWARK', desc: 'armored',      color: '#ffcf6e', g: [[4,3,'engine'],[4,4,'armor'],[4,5,'turret'],[3,4,'armor'],[5,4,'hull'],[5,5,'hull'],[4,6,'armor']] },
+  { name: 'INTERCEPTOR', desc: '2 engines', color: '#8ad4ff', g: [[4,2,'engine'],[4,3,'engine'],[4,4,'hull'],[4,5,'turret']] },
+  { name: 'LANCER',  desc: 'rocket pod',   color: '#ff8a5c', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'rocket'],[3,4,'armor']] },
+  { name: 'HAULER',  desc: 'cargo, 1 gun', color: '#d4b06a', g: [[4,3,'engine'],[4,4,'cargo'],[4,5,'turret'],[3,4,'hull'],[5,4,'cargo']] },
+  { name: 'COLLECTOR', desc: 'gyro + cargo', color: '#3ae8a8', g: [[4,3,'engine'],[4,4,'gyro'],[4,5,'turret'],[3,4,'cargo'],[5,4,'cargo']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -48,15 +60,34 @@ const angDiff = (a, b) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if
 const rand = (a, b) => a + Math.random() * (b - a);
 
 // ---------- state ----------
-let mode = 'editor'; // 'editor' | 'flight'
+let mode = 'menu'; // 'menu' | 'base' | 'editor' | 'flight' | 'planet'
 let design, selected = 'hull';   // design = freeform part list [{dx,dy,t}] in ship-local px
 let mouse = { x: 0, y: 0 };
+
+// ---------- profile / accounts / settings (localStorage) ----------
+let profile = null; // {name, lvl, scrap, ore, fuel, steam}
+let accounts;
+try { accounts = JSON.parse(localStorage.getItem('vs_accounts') || '[]'); }
+catch (_) { accounts = []; }
+const SET = Object.assign({ fx: true, stars: true, grid: true },
+  JSON.parse(localStorage.getItem('vs_settings') || '{}'));
+const saveAccounts = () =>
+  localStorage.setItem('vs_accounts', JSON.stringify(accounts));
+const saveSettings = () =>
+  localStorage.setItem('vs_settings', JSON.stringify(SET));
+function saveProfile() {
+  if (!profile) return;
+  const i = accounts.findIndex(a => a.name === profile.name);
+  if (i >= 0) accounts[i] = profile; else accounts.push(profile);
+  saveAccounts();
+}
 let allies = [], foes, station, bullets, particles, stars, planet;
 const selection = new Set(); // ally ships under command
 let rosterSel = new Set();   // chosen escort indices
 let paused = false, autopilot = false, won = false, dead = false, time = 0;
 let salvage = 0, debris = [], msg = null, reinforced = false;
-const budget = () => BUDGET + salvage;
+// build capacity is the limiter — the workbench field itself is unbounded
+const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + Math.floor(salvage);
 let cam = { x: 0, y: 0, zoom: 1 };   // free camera: wheel zoom, RMB/MMB drag pan, F re-center
 let dragging = false, dragLast = null;
 let asteroids = [], pods = [], waveT = 45, roamerT = 12;
@@ -77,8 +108,21 @@ const flagship = () => allies[0];
 
 // ---------- input ----------
 addEventListener('keydown', e => {
+  if (mode === 'editor' && e.code === 'Escape') { mode = 'base'; return; }
+  if (mode === 'base' && e.code === 'Escape') { mode = 'menu'; return; }
   if (mode === 'planet') {
     if (e.code === 'KeyR') mode = 'editor';
+    if (e.code === 'Enter' && pwon) {
+      // bank the haul and head home — base level grows, budget grows
+      if (profile) {
+        profile.scrap = (profile.scrap || 0) + 15;
+        profile.ore = (profile.ore || 0) + pres.ore;
+        profile.fuel = (profile.fuel || 0) + pres.fuel;
+        profile.lvl = (profile.lvl || 1) + 1;
+        saveProfile();
+      }
+      mode = 'base';
+    }
     if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
     if (e.code === 'Digit1') pBuildSel = 'wall';
     if (e.code === 'Digit2') pBuildSel = 'turret';
@@ -94,6 +138,8 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
 });
 addEventListener('mousedown', e => {
+  if (mode === 'menu') { if (e.button === 0) menuClick(e.clientX, e.clientY); return; }
+  if (mode === 'base') { if (e.button === 0) baseClick(e.clientX, e.clientY); return; }
   if (mode === 'editor') { if (e.button === 0) editorClick(e.clientX, e.clientY); return; }
   if (mode === 'planet') {
     if (e.button === 1 || e.button === 2) { dragging = true; dragLast = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
@@ -144,8 +190,16 @@ function defDesign(list) {
 
 const designCost = () => design.reduce((s, p) => s + TYPES[p.t].cost, 0);
 
-// ship preview area — the "workbench" surface
+// ship preview area — the "workbench" surface. The design auto-centers on
+// its own centroid, so the build field is effectively unbounded — the base
+// level's build budget is the only limiter.
 const view = () => ({ x: W * 0.32, y: H * 0.52, k: 1.7 });
+function designCenter() {
+  if (!design.length) return { dx: 0, dy: 0 };
+  let dx = 0, dy = 0;
+  for (const p of design) { dx += p.dx; dy += p.dy; }
+  return { dx: dx / design.length, dy: dy / design.length };
+}
 
 // where the part would land: flush-snap to a neighbor edge, else free offset
 function snapPos(px, py) {
@@ -180,8 +234,8 @@ function editorClick(mx, my) {
     }
   }
   if (inRect(launchBtn, mx, my)) { if (canLaunch().ok) launch(); return; }
-  const v = view();
-  const px = (mx - v.x) / v.k, py = (my - v.y) / v.k;
+  const v = view(), ctr = designCenter();
+  const px = (mx - v.x) / v.k + ctr.dx, py = (my - v.y) / v.k + ctr.dy;
   // click a part -> rip it off
   for (const p of design) {
     if (Math.hypot(px - p.dx, py - p.dy) < CS * 0.55) {
@@ -200,7 +254,7 @@ function canLaunch() {
   if (!design.length) return { ok: false, why: 'empty hull' };
   if (!n('hull')) return { ok: false, why: 'need HULL' };
   if (!n('engine')) return { ok: false, why: 'need ENGINE' };
-  if (!n('turret')) return { ok: false, why: 'need GUN' };
+  if (!n('turret') && !n('rocket')) return { ok: false, why: 'need a WEAPON' };
   return { ok: true };
 }
 
@@ -220,9 +274,11 @@ const gridFromList = defDesign; // foe/roster layouts are still written as [r,c,
 
 function recount(s) {
   const eng = s.blocks.filter(b => b.type === 'engine').length;
-  const mass = Math.max(1, s.blocks.length);
+  const gyro = s.blocks.filter(b => b.type === 'gyro').length;
+  // armor plates ride heavier than normal blocks
+  const mass = Math.max(1, s.blocks.reduce((m, b) => m + (b.type === 'armor' ? 1.5 : 1), 0));
   s.thrust = eng * 220 / (mass * 0.5);
-  s.turn = Math.max(1.0, 2.4 - mass * 0.08);
+  s.turn = Math.max(1.0, 2.4 - mass * 0.08 + gyro * 0.4);
 }
 
 function makeShip(list, x, y, team, color, o = {}) {
@@ -244,6 +300,7 @@ function bw(s, b) {
 
 // ---------- flight setup ----------
 function launch() {
+  saveProfile();
   mode = 'flight';
   autopilot = false; paused = false; won = false; dead = false; time = 0;
   debris = []; msg = null; reinforced = false;
@@ -410,7 +467,8 @@ function nearestAlly(f) {
 
 function autoFire(s, dt, forced) {
   for (const b of s.blocks) {
-    if (b.type !== 'turret' || b.barrels <= 0) continue;
+    if (b.type !== 'turret' && b.type !== 'rocket') continue;
+    if (b.type === 'turret' && b.barrels <= 0) continue;
     b.cd -= dt;
     let t = null;
     if (forced && validTarget(forced)) t = targetPoint(forced);
@@ -419,6 +477,18 @@ function autoFire(s, dt, forced) {
     const p = bw(s, b);
     b.aim = Math.atan2(t.y - p.y, t.x - p.x); // barrel tracks target
     if (b.cd > 0) continue;
+    // rocket pods reach farther and burst on a wider circle
+    if (b.type === 'rocket') {
+      if (dist(p, t) > 900) continue;
+      const tf = dist(p, t) / 280;
+      const ax = t.x + (t.vx || 0) * tf - s.vx * tf;
+      const ay = t.y + (t.vy || 0) * tf - s.vy * tf;
+      const a = Math.atan2(ay - p.y, ax - p.x);
+      b.cd = 2.4;
+      bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(a) * 280, vy: s.vy + Math.sin(a) * 280, ttl: 3.4, dmg: 26, team: s.team, splash: 2, rocket: true });
+      particles.push({ x: p.x + Math.cos(a) * 16, y: p.y + Math.sin(a) * 16, vx: -Math.cos(a) * 50 + rand(-15, 15), vy: -Math.sin(a) * 50 + rand(-15, 15), ttl: 0.35, max: 0.35, color: '#ffb36e', r: 5 });
+      continue;
+    }
     if (dist(p, t) > 640) continue;
     const tf = dist(p, t) / 400; // bullet flight time
     // aim where the target will be, minus our own drift — otherwise orbiting
@@ -753,6 +823,105 @@ function update(dt) {
   else if (!allies[0].alive) dead = true; // flagship lost = mission failed
 }
 
+// ---------- menu / base ----------
+const menuRects = []; // [{r, fn}]
+const baseRects = [];
+
+function menuClick(mx, my) {
+  for (const m of menuRects) if (inRect(m.r, mx, my)) { m.fn(); return; }
+}
+
+function baseClick(mx, my) {
+  for (const m of baseRects) if (inRect(m.r, mx, my)) { m.fn(); return; }
+}
+
+function loginSteam() {
+  profile = accounts.find(a => a.steam) ||
+    { name: 'STEAM-PILOT', lvl: 1, scrap: 0, ore: 0, fuel: 0, steam: true };
+  saveProfile();
+  mode = 'base';
+}
+
+function drawMenu() {
+  ctx.fillStyle = '#04070f'; ctx.fillRect(0, 0, W, H);
+  menuRects.length = 0;
+  const cx = W / 2;
+  // title
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 42px monospace';
+  ctx.fillText('VOID SALVAGE', cx, H * 0.2);
+  ctx.fillStyle = '#5a6a8a'; ctx.font = '14px monospace';
+  ctx.fillText('salvage  ·  build  ·  raid', cx, H * 0.2 + 32);
+
+  const btn = (y, w, h, label, accent, fn) => {
+    const r = { x: cx - w / 2, y, w, h };
+    menuRects.push({ r, fn });
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, w, h);
+    ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, w, h);
+    ctx.fillStyle = accent; ctx.font = 'bold 16px monospace';
+    ctx.fillText(label, cx, y + h / 2 + 6);
+    return r;
+  };
+
+  let y = H * 0.34;
+  btn(y, 320, 52, 'LOGIN VIA STEAM', '#7fd4ff', loginSteam); y += 68;
+  btn(y, 320, 44, 'NEW PILOT', '#9dff8a', () => {
+    profile = { name: 'CMDR-' + Math.floor(rand(1000, 9999)), lvl: 1, scrap: 0, ore: 0, fuel: 0 };
+    saveProfile();
+    mode = 'base';
+  });
+  y += 70;
+
+  // saved accounts
+  const saved = accounts.filter(a => !a.steam);
+  if (saved.length) {
+    ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 14px monospace';
+    ctx.fillText('SAVED PILOTS', cx, y); y += 14;
+    for (const a of saved.slice(0, 4)) {
+      y += 10;
+      btn(y, 320, 40, `${a.name}   ·   BASE LV ${a.lvl}`, '#8aa0c8', () => { profile = a; mode = 'base'; });
+      y += 50;
+    }
+  }
+
+  // settings
+  y += 16;
+  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 14px monospace';
+  ctx.fillText('SETTINGS', cx, y); y += 16;
+  for (const k of ['fx', 'stars', 'grid']) {
+    const on = SET[k];
+    btn(y, 200, 34, `${k.toUpperCase()}  ${on ? 'ON' : 'OFF'}`, on ? '#9dff8a' : '#5a6a8a', () => { SET[k] = !SET[k]; saveSettings(); });
+    y += 44;
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawBase() {
+  ctx.fillStyle = '#04070f'; ctx.fillRect(0, 0, W, H);
+  baseRects.length = 0;
+  const cx = W / 2;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 30px monospace';
+  ctx.fillText('ORBITAL BASE', cx, H * 0.24);
+  ctx.fillStyle = '#ffcf6e'; ctx.font = 'bold 18px monospace';
+  ctx.fillText(`LEVEL ${profile?.lvl ?? 1}`, cx, H * 0.24 + 36);
+  ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
+  ctx.fillText(`scrap ${Math.floor(profile?.scrap ?? 0) + Math.floor(salvage)}   ore ${profile?.ore ?? 0}   fuel ${profile?.fuel ?? 0}`, cx, H * 0.24 + 64);
+  ctx.fillText(`build budget ${budget()} — grows with base level`, cx, H * 0.24 + 88);
+
+  const btn = (y, label, accent, fn) => {
+    const r = { x: cx - 160, y, w: 320, h: 50 };
+    baseRects.push({ r, fn });
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = accent; ctx.font = 'bold 16px monospace';
+    ctx.fillText(label, cx, y + 31);
+  };
+  btn(H * 0.45, 'SHIPYARD — build & launch', '#9dff8a', () => { mode = 'editor'; });
+  btn(H * 0.45 + 66, 'BACK TO MENU', '#5a6a8a', () => { mode = 'menu'; });
+  ctx.textAlign = 'left';
+}
+
 // ---------- draw: editor ----------
 function drawEditor() {
   ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
@@ -772,9 +941,9 @@ function drawEditor() {
   for (let gx = -280; gx <= 280; gx += 44) { ctx.beginPath(); ctx.moveTo(v.x + gx, v.y - 260); ctx.lineTo(v.x + gx, v.y + 260); ctx.stroke(); }
   for (let gy = -240; gy <= 240; gy += 44) { ctx.beginPath(); ctx.moveTo(v.x - 320, v.y + gy); ctx.lineTo(v.x + 320, v.y + gy); ctx.stroke(); }
 
-  const ds = CS * v.k;
+  const ds = CS * v.k, ctr = designCenter();
   const drawPart = (dx, dy, t, ghost) => {
-    const x = v.x + dx * v.k, y = v.y + dy * v.k;
+    const x = v.x + (dx - ctr.dx) * v.k, y = v.y + (dy - ctr.dy) * v.k;
     ctx.globalAlpha = ghost ? 0.45 : 1;
     const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
     if (sprReady(spr)) ctx.drawImage(spr, x - ds / 2, y - ds / 2, ds, ds);
@@ -786,7 +955,7 @@ function drawEditor() {
 
   // ghost preview — shows exactly where the part will weld
   {
-    const px = (mouse.x - v.x) / v.k, py = (mouse.y - v.y) / v.k;
+    const px = (mouse.x - v.x) / v.k + ctr.dx, py = (mouse.y - v.y) / v.k + ctr.dy;
     let onPart = false;
     for (const p of design) if (Math.hypot(px - p.dx, py - p.dy) < CS * 0.55) onPart = true;
     const sp = !onPart && snapPos(px, py);
@@ -798,7 +967,7 @@ function drawEditor() {
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
   ctx.fillText('PARTS', px, gs.y - 10);
   KEYS_ORDER.forEach((k, i) => {
-    const r = { x: px, y: gs.y + i * 64, w: pw, h: 54 };
+    const r = { x: px, y: gs.y + i * 50, w: pw, h: 44 };
     palette[k] = r;
     const T = TYPES[k], sel = selected === k;
     ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
@@ -806,20 +975,21 @@ function drawEditor() {
     ctx.strokeStyle = sel ? T.edge : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     const spr = k === 'turret' ? SPRITES.gun_base : SPRITES[k];
-    if (sprReady(spr)) ctx.drawImage(spr, r.x + 8, r.y + 11, 32, 32);
-    else { ctx.fillStyle = T.color; ctx.fillRect(r.x + 10, r.y + 14, 24, 24); }
-    ctx.fillStyle = T.edge; ctx.font = 'bold 13px monospace';
-    ctx.fillText(T.name, r.x + 46, r.y + 26);
-    ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-    ctx.fillText(`${T.cost} scrap`, r.x + 46, r.y + 44);
+    if (sprReady(spr)) ctx.drawImage(spr, r.x + 8, r.y + 9, 26, 26);
+    else { ctx.fillStyle = T.color; ctx.fillRect(r.x + 10, r.y + 12, 20, 20); }
+    ctx.fillStyle = T.edge; ctx.font = 'bold 12px monospace';
+    ctx.fillText(T.name, r.x + 42, r.y + 20);
+    ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace';
+    ctx.fillText(`${T.cost} scrap`, r.x + 42, r.y + 36);
   });
 
-  // wingmen roster
-  const ry0 = gs.y + KEYS_ORDER.length * 64 + 30;
+  // wingmen roster — two columns
+  const ry0 = gs.y + KEYS_ORDER.length * 50 + 26;
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
   ctx.fillText(`FLEET  (${rosterSel.size}/${MAX_WING})`, px, ry0 - 10);
   ROSTER.forEach((r, i) => {
-    const rc = { x: px, y: ry0 + i * 76, w: pw + 60, h: 66 };
+    const col = i % 2, row = Math.floor(i / 2);
+    const rc = { x: px + col * 175, y: ry0 + row * 60, w: 165, h: 52 };
     rosterRects[i] = rc;
     const sel = rosterSel.has(i);
     ctx.fillStyle = sel ? '#14261c' : '#0b1220';
@@ -828,15 +998,15 @@ function drawEditor() {
     ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
     // mini layout preview — sprites, not colored squares
     for (const [rr, cc, t] of r.g) {
-      const mx = rc.x + 8 + (cc - 1) * 11, my = rc.y + 10 + (rr - 2) * 11;
+      const mx = rc.x + 6 + (cc - 1) * 9, my = rc.y + 8 + (rr - 2) * 9;
       const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
-      if (sprReady(spr)) ctx.drawImage(spr, mx, my, 10, 10);
-      else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(mx, my, 9, 9); }
+      if (sprReady(spr)) ctx.drawImage(spr, mx, my, 8, 8);
+      else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(mx, my, 7, 7); }
     }
-    ctx.fillStyle = sel ? '#9dff8a' : '#8aa0c8'; ctx.font = 'bold 13px monospace';
-    ctx.fillText(r.name, rc.x + 60, rc.y + 26);
-    ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-    ctx.fillText(r.desc, rc.x + 60, rc.y + 44);
+    ctx.fillStyle = sel ? '#9dff8a' : '#8aa0c8'; ctx.font = 'bold 11px monospace';
+    ctx.fillText(r.name, rc.x + 52, rc.y + 22);
+    ctx.fillStyle = '#5a6a8a'; ctx.font = '10px monospace';
+    ctx.fillText(r.desc, rc.x + 52, rc.y + 40);
   });
 
   // stats
@@ -847,7 +1017,7 @@ function drawEditor() {
   ctx.fillText(`mass ${mass}   thrust ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   guns ${n('turret')}   scrap ${designCost()}/${Math.floor(budget())}${salvage ? '  (+' + salvage.toFixed(1) + ' salvaged)' : ''}`, v.x - 320, sy);
 
   const chk = canLaunch();
-  launchBtn.x = px; launchBtn.y = sy - 34;
+  launchBtn.x = px; launchBtn.y = ry0 + Math.ceil(ROSTER.length / 2) * 60 + 8;
   ctx.fillStyle = chk.ok ? '#1d3a24' : '#141c2e';
   ctx.strokeStyle = chk.ok ? '#9dff8a' : '#4a5a7a'; ctx.lineWidth = 2;
   ctx.fillRect(launchBtn.x, launchBtn.y, launchBtn.w, launchBtn.h);
@@ -912,6 +1082,8 @@ function drawOrderMarker(s) {
 }
 
 function draw() {
+  if (mode === 'menu') { drawMenu(); return; }
+  if (mode === 'base') { drawBase(); return; }
   if (mode === 'editor') { drawEditor(); return; }
   if (mode === 'planet') { pDraw(); return; }
   ctx.fillStyle = '#080d16'; ctx.fillRect(0, 0, W, H);
@@ -1004,6 +1176,18 @@ function draw() {
   for (const s of allies) if (s.alive && !autopilot) drawOrderMarker(s);
 
   for (const b of bullets) {
+    if (b.rocket) {
+      const a = Math.atan2(b.vy, b.vx);
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(a);
+      ctx.fillStyle = 'rgba(255,179,110,0.5)';
+      ctx.fillRect(-22, -2.5, 18, 5); // exhaust trail
+      ctx.fillStyle = '#ffd9a8';
+      ctx.fillRect(-6, -3.5, 12, 7);
+      ctx.fillStyle = '#ff8a5c';
+      ctx.fillRect(4, -2.5, 5, 5);
+      ctx.restore();
+      continue;
+    }
     ctx.strokeStyle = b.team === 'foe' ? 'rgba(255,110,92,0.4)' : 'rgba(127,212,255,0.4)';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(b.x - b.vx * 0.03, b.y - b.vy * 0.03); ctx.lineTo(b.x, b.y); ctx.stroke();
@@ -1435,6 +1619,18 @@ function pDraw() {
   }
 
   for (const b of bullets) {
+    if (b.rocket) {
+      const a = Math.atan2(b.vy, b.vx);
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(a);
+      ctx.fillStyle = 'rgba(255,179,110,0.5)';
+      ctx.fillRect(-22, -2.5, 18, 5); // exhaust trail
+      ctx.fillStyle = '#ffd9a8';
+      ctx.fillRect(-6, -3.5, 12, 7);
+      ctx.fillStyle = '#ff8a5c';
+      ctx.fillRect(4, -2.5, 5, 5);
+      ctx.restore();
+      continue;
+    }
     ctx.strokeStyle = b.team === 'foe' ? 'rgba(255,110,92,0.4)' : 'rgba(127,212,255,0.4)';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(b.x - b.vx * 0.03, b.y - b.vy * 0.03); ctx.lineTo(b.x, b.y); ctx.stroke();
@@ -1483,7 +1679,7 @@ function pDraw() {
     ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center';
     ctx.fillText('PAUSED', W / 2, H / 2); ctx.textAlign = 'left';
   }
-  if (pwon) { ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('BASE CRUSHED — LOOT SECURED  (R: shipyard)', W / 2, H / 2); ctx.textAlign = 'left'; }
+  if (pwon) { ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('BASE CRUSHED — LOOT SECURED   (ENTER: home base · R: shipyard)', W / 2, H / 2); ctx.textAlign = 'left'; }
   if (pdead) { ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('LANDER LOST — press R to rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
 }
 
