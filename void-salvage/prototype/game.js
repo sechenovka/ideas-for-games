@@ -100,7 +100,37 @@ const CONTRACTS = {
 };
 let salvage = 0, debris = [], msg = null, reinforced = false;
 // build capacity is the limiter — the workbench field itself is unbounded
-const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + Math.floor(salvage);
+const depotBonus = () => ((profile && profile.base) || []).reduce((n, b) => n + (b && b.t === 'depot' ? b.lvl * 3 : 0), 0);
+const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + depotBonus() + Math.floor(salvage);
+
+// ---------- base construction ----------
+const BUILDINGS = {
+  mine:    { name: 'MINE',    desc: 'ore/min',    rate: 6, res: 'ore',   accent: '#8ad4ff', cost: l => 30 * (l + 1) },
+  smelter: { name: 'SMELTER', desc: 'scrap/min',  rate: 8, res: 'scrap', accent: '#ffcf6e', cost: l => 40 * (l + 1) },
+  depot:   { name: 'DEPOT',   desc: '+3 budget',  rate: 0,              accent: '#9dff8a', cost: l => 35 * (l + 1) },
+  turret:  { name: 'TURRET',  desc: 'defense',    rate: 0,              accent: '#ff8a7a', cost: l => 45 * (l + 1) },
+};
+let baseSlot = -1;
+// offline production: buildings work while you're away (8h cap)
+function baseTick() {
+  if (!profile) return;
+  profile.base = profile.base || Array(12).fill(null);
+  const now = Date.now(), mins = Math.min(480, Math.max(0, (now - (profile.lastSeen || now)) / 60000));
+  if (mins > 0.05) {
+    let got = 0;
+    for (const b of profile.base) {
+      if (!b) continue;
+      const spec = BUILDINGS[b.t];
+      if (spec.rate) { profile[spec.res] = (profile[spec.res] || 0) + Math.floor(spec.rate * b.lvl * mins); got = 1; }
+    }
+    if (got) saveProfile();
+  }
+  profile.lastSeen = now;
+}
+function refreshLvl() {
+  profile.lvl = 1 + Math.floor(profile.base.reduce((n, b) => n + (b ? b.lvl : 0), 0) / 3);
+  saveProfile();
+}
 let cam = { x: 0, y: 0, zoom: 1 };   // free camera: wheel zoom, RMB/MMB drag pan, F re-center
 let dragging = false, dragLast = null;
 let asteroids = [], pods = [], waveT = 45, roamerT = 12;
@@ -1186,46 +1216,127 @@ function drawMenu() {
 function drawBase() {
   ctx.fillStyle = '#04070f'; ctx.fillRect(0, 0, W, H);
   baseRects.length = 0;
+  profile.base = profile.base || Array(12).fill(null);
   const cx = W / 2;
   ctx.textAlign = 'center';
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 30px monospace';
-  ctx.fillText('ORBITAL BASE', cx, H * 0.24);
+  ctx.fillText('ORBITAL BASE', cx, H * 0.10);
   ctx.fillStyle = '#ffcf6e'; ctx.font = 'bold 18px monospace';
-  ctx.fillText(`LEVEL ${profile?.lvl ?? 1}`, cx, H * 0.24 + 36);
+  ctx.fillText(`LEVEL ${profile?.lvl ?? 1}`, cx, H * 0.10 + 34);
+  const prod = { ore: 0, scrap: 0 };
+  for (const b of profile.base) if (b && BUILDINGS[b.t].rate) prod[BUILDINGS[b.t].res] += BUILDINGS[b.t].rate * b.lvl;
   ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
-  ctx.fillText(`scrap ${Math.floor(profile?.scrap ?? 0) + Math.floor(salvage)}   ore ${profile?.ore ?? 0}   fuel ${profile?.fuel ?? 0}`, cx, H * 0.24 + 64);
-  ctx.fillText(`build budget ${budget()} — grows with base level`, cx, H * 0.24 + 88);
+  ctx.fillText(`scrap ${Math.floor(profile?.scrap ?? 0) + Math.floor(salvage)}   ore ${Math.floor(profile?.ore ?? 0)}   fuel ${profile?.fuel ?? 0}   —   +${prod.scrap} scrap +${prod.ore} ore /min`, cx, H * 0.10 + 60);
+  ctx.fillText(`build budget ${budget()} — base level + depots`, cx, H * 0.10 + 82);
 
-  const btn = (y, label, accent, fn) => {
-    const r = { x: cx - 160, y, w: 320, h: 50 };
+  // ---- left column: command ----
+  const lx = W * 0.5 - 540, lw = 430;
+  let y = H * 0.24;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
+  ctx.fillText('COMMAND', lx, y); y += 12;
+  const lbtn = (label, accent, h, fn, sub) => {
+    const r = { x: lx, y, w: lw, h };
     baseRects.push({ r, fn });
     ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = accent; ctx.font = 'bold 16px monospace';
-    ctx.fillText(label, cx, y + 31);
+    ctx.fillStyle = accent; ctx.font = 'bold 15px monospace';
+    ctx.fillText(label, r.x + 16, r.y + (sub ? 20 : h / 2 + 5));
+    if (sub) { ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace'; ctx.fillText(sub, r.x + 16, r.y + 40); }
+    y += h + 10;
   };
-  btn(H * 0.42, 'SHIPYARD — build & launch', '#9dff8a', () => { mode = 'editor'; });
-
-  // contract board — pick a job, the shipyard launches into it
-  let y = H * 0.42 + 80;
+  lbtn('SHIPYARD — build & launch', '#9dff8a', 46, () => { mode = 'editor'; });
+  y += 8;
   ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
-  ctx.fillText('CONTRACTS', cx, y); y += 14;
+  ctx.fillText('CONTRACTS', lx, y); y += 10;
   for (const k of Object.keys(CONTRACTS)) {
     const c = CONTRACTS[k], sel = mission === k;
-    const r = { x: cx - 260, y, w: 520, h: 58 };
+    const r = { x: lx, y, w: lw, h: 54 };
     baseRects.push({ r, fn: () => { mission = k; mode = 'editor'; } });
     ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
     ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeStyle = sel ? c.accent : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = c.accent; ctx.font = 'bold 14px monospace';
-    ctx.fillText(`${c.name}${sel ? '  — ACTIVE' : ''}`, cx, y + 22);
-    ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-    ctx.fillText(c.desc, cx, y + 42);
-    y += 70;
+    ctx.fillStyle = c.accent; ctx.font = 'bold 13px monospace';
+    ctx.fillText(`${c.name}${sel ? '  — ACTIVE' : ''}`, r.x + 16, y + 20);
+    ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace';
+    ctx.fillText(c.desc, r.x + 16, y + 38);
+    y += 62;
   }
-  btn(y + 8, 'BACK TO MENU', '#5a6a8a', () => { mode = 'menu'; });
+  lbtn('BACK TO MENU', '#5a6a8a', 44, () => { mode = 'menu'; });
+
+  // ---- right column: the base itself, 12 build slots ----
+  const gx = W * 0.5 - 20, gy = H * 0.24, cw = 118, ch = 92, gap = 10;
   ctx.textAlign = 'left';
+  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
+  ctx.fillText('BASE GRID', gx, gy - 14);
+  for (let i = 0; i < 12; i++) {
+    const col = i % 4, row = Math.floor(i / 4);
+    const r = { x: gx + col * (cw + gap), y: gy + row * (ch + gap), w: cw, h: ch };
+    const b = profile.base[i], sel = baseSlot === i;
+    baseRects.push({ r, fn: () => { baseSlot = i; } });
+    if (b) {
+      const spec = BUILDINGS[b.t];
+      ctx.fillStyle = '#101a2c'; ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.strokeStyle = sel ? spec.accent : spec.accent + '55'; ctx.lineWidth = sel ? 2 : 1;
+      ctx.strokeRect(r.x, r.y, r.w, r.h);
+      ctx.fillStyle = spec.accent; ctx.font = 'bold 12px monospace';
+      ctx.fillText(spec.name, r.x + 10, r.y + 22);
+      ctx.fillStyle = '#8aa0c8'; ctx.font = '11px monospace';
+      ctx.fillText(`LV ${b.lvl}`, r.x + 10, r.y + 42);
+      ctx.fillStyle = '#5a6a8a';
+      ctx.fillText(spec.rate ? `+${spec.rate * b.lvl}/min` : spec.desc, r.x + 10, r.y + 60);
+    } else {
+      ctx.strokeStyle = sel ? '#7fd4ff' : '#2a3a55';
+      ctx.setLineDash([5, 5]); ctx.lineWidth = sel ? 2 : 1;
+      ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); ctx.setLineDash([]);
+      ctx.fillStyle = sel ? '#7fd4ff' : '#2a3a55'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('+', r.x + r.w / 2, r.y + r.h / 2 + 8); ctx.textAlign = 'left';
+    }
+  }
+
+  // build / upgrade picker under the grid
+  if (baseSlot >= 0) {
+    const b = profile.base[baseSlot];
+    const py = gy + 3 * (ch + gap) + 12;
+    if (!b) {
+      ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 13px monospace';
+      ctx.fillText('CONSTRUCT', gx, py - 4);
+      let bx = gx;
+      for (const k of Object.keys(BUILDINGS)) {
+        const spec = BUILDINGS[k], cost = spec.cost(0), afford = (profile.scrap || 0) >= cost;
+        const r = { x: bx, y: py + 6, w: cw, h: 58 };
+        baseRects.push({ r, fn: () => {
+          if ((profile.scrap || 0) < cost) return;
+          profile.scrap -= cost;
+          profile.base[baseSlot] = { t: k, lvl: 1 };
+          refreshLvl();
+        } });
+        ctx.fillStyle = afford ? '#0b1220' : '#080d16'; ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeStyle = afford ? spec.accent : '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = afford ? spec.accent : '#3a4a6a'; ctx.font = 'bold 11px monospace';
+        ctx.fillText(spec.name, r.x + 8, r.y + 16);
+        ctx.fillStyle = '#5a6a8a'; ctx.font = '10px monospace';
+        ctx.fillText(spec.desc, r.x + 8, r.y + 32);
+        ctx.fillStyle = afford ? '#ffcf6e' : '#4a4a3a';
+        ctx.fillText(`${cost} scrap`, r.x + 8, r.y + 48);
+        bx += cw + gap;
+      }
+    } else {
+      const spec = BUILDINGS[b.t], cost = spec.cost(b.lvl), afford = (profile.scrap || 0) >= cost;
+      const r = { x: gx, y: py + 6, w: 240, h: 58 };
+      baseRects.push({ r, fn: () => {
+        if ((profile.scrap || 0) < cost) return;
+        profile.scrap -= cost; b.lvl++; refreshLvl();
+      } });
+      ctx.fillStyle = afford ? '#141c2e' : '#080d16'; ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.strokeStyle = afford ? spec.accent : '#1a2438'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
+      ctx.fillStyle = afford ? spec.accent : '#3a4a6a'; ctx.font = 'bold 13px monospace';
+      ctx.fillText(`UPGRADE ${spec.name} → LV ${b.lvl + 1}`, r.x + 14, r.y + 24);
+      ctx.fillStyle = afford ? '#ffcf6e' : '#4a4a3a'; ctx.font = '12px monospace';
+      ctx.fillText(`${cost} scrap`, r.x + 14, r.y + 44);
+    }
+  }
 }
 
 // ---------- draw: editor ----------
@@ -2038,10 +2149,12 @@ function pDraw() {
 }
 
 // ---------- loop ----------
-let last = performance.now();
+let last = performance.now(), lastMode = mode;
 function loop(now) {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
+  if (mode === 'base' && lastMode !== 'base') baseTick(); // accrue on arrival
+  lastMode = mode;
   if (mode === 'flight' && !paused) update(dt);
   if (mode === 'planet' && !paused) pUpdate(dt);
   draw();
