@@ -115,6 +115,15 @@ const L = {
     b_menu: 'BACK TO MENU', b_grid: 'BASE GRID', b_construct: 'CONSTRUCT',
     b_raid: '!! PIRATE RAID INBOUND — DEFEND',
     b_raid_sub: 'your buildings will fight — lose and one is damaged',
+    p_hull: 'HULL', p_armor: 'ARMOR', p_engine: 'ENGINE', p_turret: 'GUN', p_rocket: 'ROCKET',
+    p_laser: 'LASER', p_ammo: 'AMMO', p_marine: 'MARINE', p_pd: 'PD', p_repair: 'REPAIR',
+    p_mines: 'MINES', p_battery: 'CELL', p_shield: 'SHIELD', p_torp: 'TORP', p_jam: 'JAM',
+    p_trac: 'TRAC', p_rctr: 'REACTOR', p_rail: 'RAIL', p_decoy: 'DECOY', p_cargo: 'CARGO', p_gyro: 'GYRO',
+    bd_mine: 'MINE', bd_smelter: 'SMELTER', bd_depot: 'DEPOT', bd_turret: 'TURRET', bd_station: 'STATION',
+    bdd_mine: 'ore/min', bdd_smelter: 'scrap/min', bdd_depot: '+3 budget', bdd_turret: 'defense', bdd_station: '+1 escort',
+    b_planet: 'HOME PLANET', b_place: 'PLACE BUILDING', b_upgrade: 'UPGRADE', b_demolish: 'DEMOLISH',
+    b_free: 'click terrain to build  ·  drag to pan  ·  wheel to zoom  ·  click a building to manage it',
+    b_tooclose: 'TOO CLOSE TO ANOTHER BUILDING', b_refund: 'refund', b_lv: 'LV',
     c_station: 'RAID THE STATION', c_belt: 'BELT SWEEP', c_hunt: 'ELITE HUNT',
     c_convoy: 'ESCORT DUTY', c_tow: 'SALVAGE RUN', c_defense: 'BASE DEFENSE',
     d_station: 'break the shield ring, kill the core, land on the planet',
@@ -153,6 +162,15 @@ const L = {
     b_menu: 'В МЕНЮ', b_grid: 'СЕТКА БАЗЫ', b_construct: 'ПОСТРОИТЬ',
     b_raid: '!! РЕЙД ПИРАТОВ — ОБОРОНА',
     b_raid_sub: 'твои постройки будут драться — проиграешь, одна пострадает',
+    p_hull: 'КОРПУС', p_armor: 'БРОНЯ', p_engine: 'ДВИГ', p_turret: 'ПУШКА', p_rocket: 'РАКЕТА',
+    p_laser: 'ЛАЗЕР', p_ammo: 'БК', p_marine: 'ДЕСАНТ', p_pd: 'ПВО', p_repair: 'РЕМОНТ',
+    p_mines: 'МИНЫ', p_battery: 'БАТ', p_shield: 'ЩИТ', p_torp: 'ТОРП', p_jam: 'ГЛУШ',
+    p_trac: 'ЛУЧ', p_rctr: 'РЕАКТ', p_rail: 'РЕЛЬСА', p_decoy: 'ОБМАНКА', p_cargo: 'ТРЮМ', p_gyro: 'ГИРО',
+    bd_mine: 'ШАХТА', bd_smelter: 'ПЛАВИЛЬНЯ', bd_depot: 'СКЛАД', bd_turret: 'ТУРЕЛЬ', bd_station: 'СТАНЦИЯ',
+    bdd_mine: 'руда/мин', bdd_smelter: 'лом/мин', bdd_depot: '+3 лимита', bdd_turret: 'оборона', bdd_station: '+1 эскорт',
+    b_planet: 'РОДНАЯ ПЛАНЕТА', b_place: 'ПОСТАВИТЬ ЗДАНИЕ', b_upgrade: 'УЛУЧШИТЬ', b_demolish: 'СНЕСТИ',
+    b_free: 'клик по земле — построить  ·  тащи — сдвиг  ·  колесо — зум  ·  клик по зданию — управление',
+    b_tooclose: 'СЛИШКОМ БЛИЗКО К ДРУГОМУ ЗДАНИЮ', b_refund: 'возврат', b_lv: 'УР.',
     c_station: 'НАЛЁТ НА СТАНЦИЮ', c_belt: 'ЗАЧИСТКА ПОЯСА', c_hunt: 'ОХОТА НА ФЛАГМАН',
     c_convoy: 'ЭСКОРТ КОНВОЯ', c_tow: 'СПАСЕНИЕ ОБЛОМКОВ', c_defense: 'ОБОРОНА БАЗЫ',
     d_station: 'сними щитовое кольцо, убей ядро, садись на планету',
@@ -226,11 +244,74 @@ const BUILDINGS = {
   turret:  { name: 'TURRET',  desc: 'defense',    rate: 0,              accent: '#ff8a7a', cost: l => 45 * (l + 1) },
   station: { name: 'STATION', desc: '+1 escort',  rate: 0,              accent: '#c8a2ff', cost: l => 70 * (l + 1) },
 };
-let baseSlot = -1;
+let baseDrag = null, buildSpot = null, baseSel = -1;
 // offline production: buildings work while you're away (8h cap)
+// ---------- planet base: seeded terrain ----------
+// the base is a huge Earth-like surface viewed top-down; buildings sit at
+// free world coords, not in a fixed slot grid — the map is big on purpose
+// because wars and troop landings will play out on it later
+const WORLD = 6000;
+let baseSeed = 1, mapImg = null;
+function hash2(x, y) {
+  let h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(baseSeed, 2246822519)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+function vnoise(x, y, sc) {
+  const gx = x / sc, gy = y / sc;
+  const x0 = Math.floor(gx), y0 = Math.floor(gy);
+  const fx = gx - x0, fy = gy - y0, s = t => t * t * (3 - 2 * t);
+  const a = hash2(x0, y0), b = hash2(x0 + 1, y0), c = hash2(x0, y0 + 1), d = hash2(x0 + 1, y0 + 1);
+  return a + (b - a) * s(fx) + (c - a) * s(fy) + (a - b - c + d) * s(fx) * s(fy);
+}
+function terrainAt(wx, wy) {
+  const e = vnoise(wx, wy, 900) * 0.62 + vnoise(wx + 7331, wy - 4117, 310) * 0.38;
+  const f = vnoise(wx - 1999, wy + 5333, 260);
+  const jit = hash2(Math.floor(wx / 40), Math.floor(wy / 40)) * 0.05 - 0.025;
+  const v = e + jit;
+  if (v < 0.38) return 'deep';
+  if (v < 0.46) return 'water';
+  if (v < 0.50) return 'sand';
+  if (v < 0.74) return f > 0.60 ? 'forest' : 'grass';
+  if (v < 0.86) return 'rock';
+  return 'snow';
+}
+const TERCOL = {
+  deep: '#0e2c48', water: '#14507a', sand: '#b09a62', grass: '#3a6434',
+  forest: '#1e4527', rock: '#575a60', snow: '#c9d4dd',
+};
+const BLD_R = 55;             // building footprint radius (world units)
+const BLD_MIN_GAP = 140;      // min distance between building centers
+
+// migrate old 12-slot saves: entries without x get spiral positions
+function migrateBase() {
+  if (!profile) return;
+  profile.base = (profile.base || []).filter(Boolean);
+  let i = 0;
+  for (const b of profile.base) {
+    if (b.x === undefined) {
+      const a = i * 2.4, r = 240 + i * 110;
+      b.x = Math.cos(a) * r; b.y = Math.sin(a) * r;
+      i++;
+    }
+  }
+  if (profile.baseSeed === undefined) {
+    for (const ch of (profile.name || 'X')) baseSeed = (Math.imul(baseSeed, 31) + ch.charCodeAt(0)) >>> 0;
+    profile.baseSeed = baseSeed;
+  }
+  baseSeed = profile.baseSeed;
+}
+function buildingAt(wx, wy) {
+  for (let i = 0; i < (profile?.base || []).length; i++) {
+    const b = profile.base[i];
+    if (Math.hypot(wx - b.x, wy - b.y) < BLD_R) return i;
+  }
+  return -1;
+}
+
 function baseTick() {
   if (!profile) return;
-  profile.base = profile.base || Array(12).fill(null);
+  migrateBase();
   const now = Date.now(), mins = Math.min(480, Math.max(0, (now - (profile.lastSeen || now)) / 60000));
   if (mins > 0.05) {
     let got = 0;
@@ -277,7 +358,11 @@ addEventListener('keydown', e => {
     if (e.code === 'KeyH') { ev.x = 0; ev.y = 0; ev.k = 1.7; return; }
     return;
   }
-  if (mode === 'base' && e.code === 'Escape') { mode = 'menu'; return; }
+  if (mode === 'base' && e.code === 'Escape') {
+    if (buildSpot) { buildSpot = null; return; }
+    if (baseSel >= 0) { baseSel = -1; return; }
+    mode = 'menu'; return;
+  }
   if (mode === 'planet') {
     if (e.code === 'KeyR') mode = 'editor';
     if (e.code === 'Enter' && pwon) {
@@ -318,7 +403,10 @@ addEventListener('keydown', e => {
 });
 addEventListener('mousedown', e => {
   if (mode === 'menu') { if (e.button === 0) menuClick(e.clientX, e.clientY); return; }
-  if (mode === 'base') { if (e.button === 0) baseClick(e.clientX, e.clientY); return; }
+  if (mode === 'base') {
+    baseDrag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, button: e.button, moved: false };
+    return;
+  }
   if (mode === 'editor') {
     if (e.button === 1) { editPanning = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
     if (e.button !== 0 && e.button !== 2) return;
@@ -345,12 +433,23 @@ addEventListener('mousemove', e => {
     }
     if (editDrag) { editDragTo(e.clientX, e.clientY); return; }
   }
+  if (mode === 'base' && baseDrag) {
+    const dx = e.clientX - baseDrag.x, dy = e.clientY - baseDrag.y;
+    baseDrag.moved = baseDrag.moved || Math.hypot(e.clientX - baseDrag.sx, e.clientY - baseDrag.sy) > 6;
+    if (baseDrag.moved) { cam.x -= dx / cam.zoom; cam.y -= dy / cam.zoom; }
+    baseDrag.x = e.clientX; baseDrag.y = e.clientY;
+    return;
+  }
   if (!dragging || (mode !== 'flight' && mode !== 'planet')) return;
   cam.x -= (e.clientX - dragLast.x) / cam.zoom;
   cam.y -= (e.clientY - dragLast.y) / cam.zoom;
   dragLast = { x: e.clientX, y: e.clientY };
 });
-addEventListener('mouseup', () => { dragging = false; editDrag = null; editPanning = null; });
+addEventListener('mouseup', e => {
+  if (baseDrag && mode === 'base' && !baseDrag.moved && baseDrag.button === 0)
+    baseClick(baseDrag.sx, baseDrag.sy);
+  dragging = false; editDrag = null; editPanning = null; baseDrag = null;
+});
 addEventListener('wheel', e => {
   if (mode === 'editor') {
     const n = Math.max(0.6, Math.min(3, ev.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
@@ -360,9 +459,9 @@ addEventListener('wheel', e => {
     e.preventDefault();
     return;
   }
-  if (mode !== 'flight' && mode !== 'planet') return;
+  if (mode !== 'flight' && mode !== 'planet' && mode !== 'base') return;
   const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-  const n = Math.max(0.4, Math.min(1.8, cam.zoom * k));
+  const n = Math.max(mode === 'base' ? 0.12 : 0.4, Math.min(mode === 'base' ? 1.6 : 1.8, cam.zoom * k));
   // zoom toward cursor
   cam.x += ((e.clientX - W / 2) / cam.zoom) * (1 - cam.zoom / n);
   cam.y += ((e.clientY - H / 2) / cam.zoom) * (1 - cam.zoom / n);
@@ -1756,7 +1855,13 @@ function menuClick(mx, my) {
 }
 
 function baseClick(mx, my) {
-  for (const m of baseRects) if (inRect(m.r, mx, my)) { m.fn(); return; }
+  for (const m of baseRects) if (inRect(m.r, mx, my)) { m.fn(mx, my); return; }
+  // terrain click — select a building or mark a construction spot
+  const w = baseToWorld(mx, my);
+  if (Math.abs(w.x) > WORLD / 2 || Math.abs(w.y) > WORLD / 2) { baseSel = -1; buildSpot = null; return; }
+  const i = buildingAt(w.x, w.y);
+  if (i >= 0) { baseSel = i; buildSpot = null; }
+  else { buildSpot = { x: w.x, y: w.y }; baseSel = -1; }
 }
 
 function loginSteam() {
@@ -1823,158 +1928,272 @@ function drawMenu() {
   ctx.textAlign = 'left';
 }
 
-function drawBase() {
-  ctx.fillStyle = '#04070f'; ctx.fillRect(0, 0, W, H);
-  baseRects.length = 0;
-  profile.base = profile.base || Array(12).fill(null);
-  const cx = W / 2;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 30px monospace';
-  ctx.fillText(T('b_title'), cx, H * 0.10);
-  ctx.fillStyle = '#ffcf6e'; ctx.font = 'bold 18px monospace';
-  ctx.fillText(`${T('b_lvl')} ${profile?.lvl ?? 1}`, cx, H * 0.10 + 34);
-  const prod = { ore: 0, scrap: 0 };
-  for (const b of profile.base) if (b && BUILDINGS[b.t].rate) prod[BUILDINGS[b.t].res] += BUILDINGS[b.t].rate * b.lvl;
-  ctx.fillStyle = '#8aa0c8'; ctx.font = '14px monospace';
-  ctx.fillText(`${T('scrap')} ${Math.floor(profile?.scrap ?? 0) + Math.floor(salvage)}   ${T('ore')} ${Math.floor(profile?.ore ?? 0)}   ${T('fuel')} ${profile?.fuel ?? 0}   —   +${prod.scrap} +${prod.ore} ${T('b_per_min')}`, cx, H * 0.10 + 60);
-  ctx.fillText(`${T('b_budget')}: ${budget()}`, cx, H * 0.10 + 82);
+function baseToScreen(wx, wy) {
+  return { x: W / 2 + (wx - cam.x) * cam.zoom, y: H / 2 + (wy - cam.y) * cam.zoom };
+}
+const baseToWorld = (mx, my) => ({ x: cam.x + (mx - W / 2) / cam.zoom, y: cam.y + (my - H / 2) / cam.zoom });
 
-  // ---- left column: command ----
-  const lx = W * 0.5 - 540, lw = 430;
-  let y = H * 0.24;
+function drawBuilding(b, sel) {
+  const s = baseToScreen(b.x, b.y), spec = BUILDINGS[b.t];
+  const r = BLD_R * cam.zoom;
+  if (s.x < -r * 2 || s.x > W + r * 2 || s.y < -r * 2 || s.y > H + r * 2) return;
+  // shadow pad
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(s.x, s.y + r * 0.72, r * 1.05, r * 0.4, 0, 0, TAU); ctx.fill();
+  // foundation pad
+  ctx.fillStyle = '#1a2230';
+  ctx.strokeStyle = sel ? '#ffffff' : spec.accent; ctx.lineWidth = sel ? 2.5 : 1.5;
+  ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU); ctx.fill(); ctx.stroke();
+  // inner structure — different silhouette per type
+  ctx.fillStyle = spec.accent;
+  const q = r * 0.55;
+  if (b.t === 'mine') {          // drill triangle
+    ctx.beginPath(); ctx.moveTo(s.x, s.y - q); ctx.lineTo(s.x + q, s.y + q * 0.7); ctx.lineTo(s.x - q, s.y + q * 0.7); ctx.closePath(); ctx.fill();
+  } else if (b.t === 'smelter') { // furnace square + chimney
+    ctx.fillRect(s.x - q, s.y - q * 0.4, q * 2, q * 1.2);
+    ctx.fillRect(s.x + q * 0.3, s.y - q, q * 0.35, q * 0.7);
+  } else if (b.t === 'depot') {   // stacked crates
+    ctx.fillRect(s.x - q, s.y - q * 0.4, q * 0.9, q * 0.9);
+    ctx.fillRect(s.x + q * 0.15, s.y - q * 0.4, q * 0.9, q * 0.9);
+    ctx.fillRect(s.x - q * 0.4, s.y - q, q * 0.9, q * 0.9);
+  } else if (b.t === 'turret') {  // gun barrel
+    ctx.beginPath(); ctx.arc(s.x, s.y, q * 0.7, 0, TAU); ctx.fill();
+    ctx.fillRect(s.x - q * 0.15, s.y - q * 1.3, q * 0.3, q * 1.1);
+  } else {                        // station dome
+    ctx.beginPath(); ctx.arc(s.x, s.y + q * 0.2, q, Math.PI, 0); ctx.fill();
+    ctx.fillRect(s.x - q * 0.15, s.y - q * 1.25, q * 0.3, q * 0.7);
+  }
+  // level pips
+  ctx.fillStyle = '#ffcf6e';
+  for (let l = 0; l < Math.min(b.lvl, 5); l++)
+    ctx.fillRect(s.x - 12 + l * 6, s.y + r + 4, 4, 4);
+  if (cam.zoom > 0.4) {
+    ctx.fillStyle = '#cfe2ff'; ctx.font = `bold ${Math.max(9, 11 * cam.zoom)}px monospace`; ctx.textAlign = 'center';
+    ctx.fillText(`${T('bd_' + b.t)} ${T('b_lv')}${b.lvl}`, s.x, s.y - r - 6);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawBase() {
+  migrateBase();
+  ctx.fillStyle = '#04101e'; ctx.fillRect(0, 0, W, H);
+  baseRects.length = 0;
+
+  // ---------- terrain (adaptive LOD so zoom-out stays fast) ----------
+  const cw = cam.zoom < 0.35 ? 160 : cam.zoom < 0.7 ? 80 : 40;
+  const wx0 = Math.floor((cam.x - W / 2 / cam.zoom) / cw) * cw, wx1 = cam.x + W / 2 / cam.zoom;
+  const wy0 = Math.floor((cam.y - H / 2 / cam.zoom) / cw) * cw, wy1 = cam.y + H / 2 / cam.zoom;
+  const sw = cw * cam.zoom;
+  for (let x = wx0; x < wx1; x += cw) {
+    for (let y = wy0; y < wy1; y += cw) {
+      const t = terrainAt(x + cw / 2, y + cw / 2);
+      ctx.fillStyle = TERCOL[t];
+      const sx = W / 2 + (x - cam.x) * cam.zoom, sy = H / 2 + (y - cam.y) * cam.zoom;
+      ctx.fillRect(sx, sy, sw + 1, sw + 1);
+      if (t === 'forest' && sw > 14) { ctx.fillStyle = 'rgba(10,30,15,0.5)'; ctx.fillRect(sx + sw * 0.25, sy + sw * 0.25, sw * 0.5, sw * 0.5); }
+      if (t === 'rock' && sw > 14) { ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(sx + sw * 0.2, sy + sw * 0.6, sw * 0.5, sw * 0.2); }
+    }
+  }
+  // world border + faint survey grid
+  const wb = baseToScreen(-WORLD / 2, -WORLD / 2), wb2 = baseToScreen(WORLD / 2, WORLD / 2);
+  ctx.strokeStyle = '#ff8a7a'; ctx.lineWidth = 2; ctx.setLineDash([10, 8]);
+  ctx.strokeRect(wb.x, wb.y, wb2.x - wb.x, wb2.y - wb.y); ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(127,212,255,0.07)'; ctx.lineWidth = 1;
+  for (let g = Math.ceil(wx0 / 400) * 400; g < wx1; g += 400) {
+    const sx = baseToScreen(g, 0).x; ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
+  }
+  for (let g = Math.ceil(wy0 / 400) * 400; g < wy1; g += 400) {
+    const sy = baseToScreen(0, g).y; ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(W, sy); ctx.stroke();
+  }
+  // origin marker — colony HQ beacon
+  const o = baseToScreen(0, 0);
+  ctx.strokeStyle = 'rgba(255,207,110,0.7)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(o.x, o.y, 10 * cam.zoom + 4, 0, TAU); ctx.stroke();
+  ctx.fillStyle = '#ffcf6e'; ctx.fillRect(o.x - 2, o.y - 2, 4, 4);
+
+  // ---------- buildings ----------
+  profile.base.forEach((b, i) => drawBuilding(b, baseSel === i));
+
+  // hover ghost — placement ring follows the cursor on empty terrain
+  if (!buildSpot) {
+    const w = baseToWorld(mouse.x, mouse.y);
+    if (Math.abs(w.x) < WORLD / 2 && Math.abs(w.y) < WORLD / 2 && mouse.y > 60 && buildingAt(w.x, w.y) < 0) {
+      const near = profile.base.some(b => Math.hypot(w.x - b.x, w.y - b.y) < BLD_MIN_GAP);
+      const s = baseToScreen(w.x, w.y);
+      ctx.strokeStyle = near ? 'rgba(255,110,92,0.6)' : 'rgba(157,255,138,0.5)';
+      ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
+      ctx.beginPath(); ctx.arc(s.x, s.y, BLD_R * cam.zoom, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  // pending spot marker
+  if (buildSpot) {
+    const s = baseToScreen(buildSpot.x, buildSpot.y);
+    ctx.strokeStyle = '#9dff8a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, BLD_R * cam.zoom + 4, 0, TAU); ctx.stroke();
+  }
+
+  // ---------- top bar ----------
+  ctx.fillStyle = 'rgba(4,8,16,0.82)'; ctx.fillRect(0, 0, W, 54);
+  ctx.strokeStyle = '#1a2438'; ctx.beginPath(); ctx.moveTo(0, 54); ctx.lineTo(W, 54); ctx.stroke();
+  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 18px monospace';
+  ctx.fillText(`🌍 ${T('b_planet')} — ${T('b_title')}`, 20, 34);
+  const prod = { ore: 0, scrap: 0 };
+  for (const b of profile.base) { const spec = BUILDINGS[b.t]; if (spec.rate) prod[BUILDINGS[b.t].res] += spec.rate * b.lvl; }
+  ctx.font = 'bold 13px monospace'; ctx.textAlign = 'right';
+  ctx.fillStyle = '#ffcf6e';
+  ctx.fillText(`${T('b_lvl')} ${profile?.lvl ?? 1}   ${T('scrap')} ${Math.floor(profile?.scrap ?? 0) + Math.floor(salvage)}   ${T('ore')} ${Math.floor(profile?.ore ?? 0)}   ${T('fuel')} ${profile?.fuel ?? 0}   +${prod.scrap}/${prod.ore}${T('b_per_min')}   ${T('b_budget')}: ${budget()}`, W - 20, 34);
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
-  ctx.fillText(T('b_cmd'), lx, y); y += 12;
+
+  // ---------- left command panel (floating) ----------
+  const lx = 16, lw = 300;
+  let y = 70;
+  ctx.fillStyle = 'rgba(6,11,20,0.88)'; ctx.fillRect(lx, y, lw, H - y - 16);
+  ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(lx, y, lw, H - y - 16);
+  y += 12;
   const lbtn = (label, accent, h, fn, sub) => {
-    const r = { x: lx, y, w: lw, h };
+    const r = { x: lx + 10, y, w: lw - 20, h };
     baseRects.push({ r, fn });
     ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = accent; ctx.font = 'bold 15px monospace';
-    ctx.fillText(label, r.x + 16, r.y + (sub ? 20 : h / 2 + 5));
-    if (sub) { ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace'; ctx.fillText(sub, r.x + 16, r.y + 40); }
-    y += h + 10;
+    ctx.fillStyle = accent; ctx.font = 'bold 14px monospace';
+    ctx.fillText(label, r.x + 14, r.y + (sub ? 18 : h / 2 + 5));
+    if (sub) { ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace'; ctx.fillText(sub, r.x + 14, r.y + 36); }
+    y += h + 8;
   };
-  lbtn(T('b_shipyard'), '#9dff8a', 46, () => { mode = 'editor'; });
-  y += 8;
-  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
-  ctx.fillText(`${T('b_contracts')} ${threat()}/${CAMPAIGN_KEYS.length}`, lx, y); y += 10;
+  lbtn(T('b_shipyard'), '#9dff8a', 42, () => { mode = 'editor'; });
+  y += 4;
+  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 13px monospace';
+  ctx.fillText(`${T('b_contracts')} ${threat()}/${CAMPAIGN_KEYS.length}`, lx + 14, y); y += 8;
   for (const k of Object.keys(CONTRACTS)) {
     const c = CONTRACTS[k];
     if (c.hidden) continue;
-    const sel = mission === k;
-    const done = !!(profile.done || {})[k];
-    const r = { x: lx, y, w: lw, h: 54 };
+    const sel = mission === k, done = !!(profile.done || {})[k];
+    const r = { x: lx + 10, y, w: lw - 20, h: 46 };
     baseRects.push({ r, fn: () => { mission = k; mode = 'editor'; } });
     ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
     ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeStyle = sel ? c.accent : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = c.accent; ctx.font = 'bold 13px monospace';
-    ctx.fillText(`${T('c_' + k) !== 'c_' + k ? T('c_' + k) : c.name}${sel ? '  — ' + T('b_active') : ''}`, r.x + 16, y + 20);
-    if (done) {
-      ctx.fillStyle = '#9dff8a'; ctx.textAlign = 'right';
-      ctx.fillText(T('b_cleared'), r.x + r.w - 14, y + 20);
-      ctx.textAlign = 'left';
-    }
-    ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace';
-    ctx.fillText(T('d_' + k) !== 'd_' + k ? T('d_' + k) : c.desc, r.x + 16, y + 38);
-    y += 62;
+    ctx.fillStyle = c.accent; ctx.font = 'bold 12px monospace';
+    ctx.fillText(`${T('c_' + k) !== 'c_' + k ? T('c_' + k) : c.name}${sel ? '  — ' + T('b_active') : ''}`, r.x + 12, y + 17);
+    if (done) { ctx.fillStyle = '#9dff8a'; ctx.textAlign = 'right'; ctx.fillText(T('b_cleared'), r.x + r.w - 10, y + 17); ctx.textAlign = 'left'; }
+    ctx.fillStyle = '#5a6a8a'; ctx.font = '10px monospace';
+    ctx.fillText((T('d_' + k) !== 'd_' + k ? T('d_' + k) : c.desc).slice(0, 52), r.x + 12, y + 35);
+    y += 52;
   }
-  // pirates picked up your base on their scopes — fight or lose a building
   if (raidWarn) {
-    const r = { x: lx, y, w: lw, h: 54 };
-    baseRects.push({ r, fn: () => {
-      raidWarn = false; mission = 'defense';
-      if (canLaunch().ok) launch(); else mode = 'editor';
-    } });
+    const r = { x: lx + 10, y, w: lw - 20, h: 50 };
+    baseRects.push({ r, fn: () => { raidWarn = false; mission = 'defense'; if (canLaunch().ok) launch(); else mode = 'editor'; } });
     const pulse = 0.55 + 0.35 * Math.sin(performance.now() / 160);
     ctx.fillStyle = `rgba(60,10,10,${pulse})`; ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeStyle = '#ff5a4a'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 15px monospace';
-    ctx.fillText(T('b_raid'), r.x + 16, y + 22);
-    ctx.fillStyle = '#c8a09a'; ctx.font = '11px monospace';
-    ctx.fillText(T('b_raid_sub'), r.x + 16, y + 40);
-    y += 64;
+    ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 13px monospace';
+    ctx.fillText(T('b_raid'), r.x + 12, y + 20);
+    ctx.fillStyle = '#c8a09a'; ctx.font = '10px monospace';
+    ctx.fillText(T('b_raid_sub'), r.x + 12, y + 38);
+    y += 60;
   }
-  lbtn(T('b_menu'), '#5a6a8a', 44, () => { mode = 'menu'; });
+  lbtn(T('b_menu'), '#5a6a8a', 38, () => { mode = 'menu'; });
+  ctx.fillStyle = '#46566e'; ctx.font = '10px monospace';
+  ctx.fillText(T('b_free'), lx + 14, Math.min(y + 20, H - 30));
 
-  // ---- right column: the base itself, 12 build slots ----
-  const gx = W * 0.5 - 20, gy = H * 0.24, cw = 118, ch = 92, gap = 10;
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
-  ctx.fillText(T('b_grid'), gx, gy - 14);
-  for (let i = 0; i < 12; i++) {
-    const col = i % 4, row = Math.floor(i / 4);
-    const r = { x: gx + col * (cw + gap), y: gy + row * (ch + gap), w: cw, h: ch };
-    const b = profile.base[i], sel = baseSlot === i;
-    baseRects.push({ r, fn: () => { baseSlot = i; } });
-    if (b) {
-      const spec = BUILDINGS[b.t];
-      ctx.fillStyle = '#101a2c'; ctx.fillRect(r.x, r.y, r.w, r.h);
-      ctx.strokeStyle = sel ? spec.accent : spec.accent + '55'; ctx.lineWidth = sel ? 2 : 1;
-      ctx.strokeRect(r.x, r.y, r.w, r.h);
-      ctx.fillStyle = spec.accent; ctx.font = 'bold 12px monospace';
-      ctx.fillText(spec.name, r.x + 10, r.y + 22);
-      ctx.fillStyle = '#8aa0c8'; ctx.font = '11px monospace';
-      ctx.fillText(`LV ${b.lvl}`, r.x + 10, r.y + 42);
-      ctx.fillStyle = '#5a6a8a';
-      ctx.fillText(spec.rate ? `+${spec.rate * b.lvl}/min` : spec.desc, r.x + 10, r.y + 60);
-    } else {
-      ctx.strokeStyle = sel ? '#7fd4ff' : '#2a3a55';
-      ctx.setLineDash([5, 5]); ctx.lineWidth = sel ? 2 : 1;
-      ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); ctx.setLineDash([]);
-      ctx.fillStyle = sel ? '#7fd4ff' : '#2a3a55'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
-      ctx.fillText('+', r.x + r.w / 2, r.y + r.h / 2 + 8); ctx.textAlign = 'left';
-    }
-  }
-
-  // build / upgrade picker under the grid
-  if (baseSlot >= 0) {
-    const b = profile.base[baseSlot];
-    const py = gy + 3 * (ch + gap) + 12;
-    if (!b) {
-      ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 13px monospace';
-      ctx.fillText(T('b_construct'), gx, py - 4);
-      let bx = gx, bi = 0;
-      for (const k of Object.keys(BUILDINGS)) {
-        const spec = BUILDINGS[k], cost = spec.cost(0), afford = (profile.scrap || 0) >= cost;
-        const r = { x: bx, y: py + 6 + Math.floor(bi / 4) * 66, w: cw, h: 58 };
-        baseRects.push({ r, fn: () => {
-          if ((profile.scrap || 0) < cost) return;
-          profile.scrap -= cost;
-          profile.base[baseSlot] = { t: k, lvl: 1 };
-          refreshLvl();
-        } });
-        ctx.fillStyle = afford ? '#0b1220' : '#080d16'; ctx.fillRect(r.x, r.y, r.w, r.h);
-        ctx.strokeStyle = afford ? spec.accent : '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(r.x, r.y, r.w, r.h);
-        ctx.fillStyle = afford ? spec.accent : '#3a4a6a'; ctx.font = 'bold 11px monospace';
-        ctx.fillText(spec.name, r.x + 8, r.y + 16);
-        ctx.fillStyle = '#5a6a8a'; ctx.font = '10px monospace';
-        ctx.fillText(spec.desc, r.x + 8, r.y + 32);
-        ctx.fillStyle = afford ? '#ffcf6e' : '#4a4a3a';
-        ctx.fillText(`${cost} scrap`, r.x + 8, r.y + 48);
-        bx += cw + gap;
-        if (++bi % 4 === 0) bx = gx;
-      }
-    } else {
-      const spec = BUILDINGS[b.t], cost = spec.cost(b.lvl), afford = (profile.scrap || 0) >= cost;
-      const r = { x: gx, y: py + 6, w: 240, h: 58 };
+  // ---------- build menu at the clicked spot ----------
+  if (buildSpot) {
+    const s = baseToScreen(buildSpot.x, buildSpot.y);
+    const mw = 240, mh = Object.keys(BUILDINGS).length * 36 + 34;
+    const mx = Math.min(Math.max(s.x + 20, 10), W - mw - 10);
+    const my = Math.min(Math.max(s.y - 20, 60), H - mh - 10);
+    ctx.fillStyle = 'rgba(8,14,24,0.95)'; ctx.fillRect(mx, my, mw, mh);
+    ctx.strokeStyle = '#7fd4ff'; ctx.lineWidth = 1.5; ctx.strokeRect(mx, my, mw, mh);
+    ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 12px monospace';
+    ctx.fillText(T('b_place'), mx + 12, my + 20);
+    let bi = 0;
+    for (const k of Object.keys(BUILDINGS)) {
+      const spec = BUILDINGS[k], cost = spec.cost(0), afford = (profile.scrap || 0) >= cost;
+      const tooClose = profile.base.some(b => Math.hypot(buildSpot.x - b.x, buildSpot.y - b.y) < BLD_MIN_GAP);
+      const r = { x: mx + 8, y: my + 28 + bi * 36, w: mw - 16, h: 32 };
       baseRects.push({ r, fn: () => {
-        if ((profile.scrap || 0) < cost) return;
-        profile.scrap -= cost; b.lvl++; refreshLvl();
+        if (!afford || tooClose) return;
+        profile.scrap -= cost;
+        profile.base.push({ t: k, lvl: 1, x: buildSpot.x, y: buildSpot.y });
+        buildSpot = null;
+        refreshLvl();
       } });
-      ctx.fillStyle = afford ? '#141c2e' : '#080d16'; ctx.fillRect(r.x, r.y, r.w, r.h);
-      ctx.strokeStyle = afford ? spec.accent : '#1a2438'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
-      ctx.fillStyle = afford ? spec.accent : '#3a4a6a'; ctx.font = 'bold 13px monospace';
-      ctx.fillText(`UPGRADE ${spec.name} → LV ${b.lvl + 1}`, r.x + 14, r.y + 24);
-      ctx.fillStyle = afford ? '#ffcf6e' : '#4a4a3a'; ctx.font = '12px monospace';
-      ctx.fillText(`${cost} scrap`, r.x + 14, r.y + 44);
+      ctx.fillStyle = afford && !tooClose ? '#0b1220' : '#080d16'; ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.strokeStyle = afford && !tooClose ? spec.accent : '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(r.x, r.y, r.w, r.h);
+      ctx.fillStyle = afford && !tooClose ? spec.accent : '#3a4a6a'; ctx.font = 'bold 11px monospace';
+      ctx.fillText(`${T('bd_' + k)} — ${cost} ${T('scrap')}`, r.x + 8, r.y + 14);
+      ctx.fillStyle = '#5a6a8a'; ctx.font = '9px monospace';
+      ctx.fillText(T('bdd_' + k) !== 'bdd_' + k ? T('bdd_' + k) : spec.desc, r.x + 8, r.y + 26);
+      bi++;
+    }
+    if (profile.base.some(b => Math.hypot(buildSpot.x - b.x, buildSpot.y - b.y) < BLD_MIN_GAP)) {
+      ctx.fillStyle = '#ff6e5c'; ctx.font = '10px monospace';
+      ctx.fillText(T('b_tooclose'), mx + 12, my + mh - 6);
     }
   }
+
+  // ---------- selected building card ----------
+  if (baseSel >= 0 && profile.base[baseSel]) {
+    const b = profile.base[baseSel], spec = BUILDINGS[b.t];
+    const cost = spec.cost(b.lvl), afford = (profile.scrap || 0) >= cost;
+    const refund = Math.floor(spec.cost(0) * b.lvl / 2);
+    const cw2 = 320, ch2 = 118, cx2 = W / 2 - cw2 / 2 + 160, cy2 = H - ch2 - 14;
+    ctx.fillStyle = 'rgba(8,14,24,0.95)'; ctx.fillRect(cx2, cy2, cw2, ch2);
+    ctx.strokeStyle = spec.accent; ctx.lineWidth = 2; ctx.strokeRect(cx2, cy2, cw2, ch2);
+    ctx.fillStyle = spec.accent; ctx.font = 'bold 14px monospace';
+    ctx.fillText(`${T('bd_' + b.t)}  ${T('b_lv')}${b.lvl}`, cx2 + 14, cy2 + 24);
+    ctx.fillStyle = '#8aa0c8'; ctx.font = '11px monospace';
+    ctx.fillText(spec.rate ? `+${spec.rate * b.lvl} ${T(spec.res)}${T('b_per_min')}` : (T('bdd_' + b.t) !== 'bdd_' + b.t ? T('bdd_' + b.t) : spec.desc), cx2 + 14, cy2 + 44);
+    // upgrade button
+    const ur = { x: cx2 + 10, y: cy2 + 56, w: cw2 - 160, h: 50 };
+    baseRects.push({ r: ur, fn: () => { if (!afford) return; profile.scrap -= cost; b.lvl++; refreshLvl(); } });
+    ctx.fillStyle = afford ? '#141c2e' : '#080d16'; ctx.fillRect(ur.x, ur.y, ur.w, ur.h);
+    ctx.strokeStyle = afford ? '#9dff8a' : '#3a4a6a'; ctx.lineWidth = 1.5; ctx.strokeRect(ur.x, ur.y, ur.w, ur.h);
+    ctx.fillStyle = afford ? '#9dff8a' : '#3a4a6a'; ctx.font = 'bold 11px monospace';
+    ctx.fillText(`${T('b_upgrade')} → ${T('b_lv')}${b.lvl + 1}`, ur.x + 10, ur.y + 20);
+    ctx.fillStyle = afford ? '#ffcf6e' : '#4a4a3a'; ctx.font = '10px monospace';
+    ctx.fillText(`${cost} ${T('scrap')}`, ur.x + 10, ur.y + 36);
+    // demolish button
+    const dr = { x: cx2 + cw2 - 140, y: cy2 + 56, w: 130, h: 50 };
+    baseRects.push({ r: dr, fn: () => { profile.scrap = (profile.scrap || 0) + refund; profile.base.splice(baseSel, 1); baseSel = -1; refreshLvl(); } });
+    ctx.fillStyle = '#201014'; ctx.fillRect(dr.x, dr.y, dr.w, dr.h);
+    ctx.strokeStyle = '#ff8a7a'; ctx.lineWidth = 1.5; ctx.strokeRect(dr.x, dr.y, dr.w, dr.h);
+    ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 11px monospace';
+    ctx.fillText(T('b_demolish'), dr.x + 10, dr.y + 20);
+    ctx.fillStyle = '#a08a5a'; ctx.font = '10px monospace';
+    ctx.fillText(`+${refund} ${T('b_refund')}`, dr.x + 10, dr.y + 36);
+  }
+
+  // ---------- minimap (bottom-right) ----------
+  const mm = 170, mx2 = W - mm - 16, my2 = H - mm - 16;
+  if (!mapImg) {
+    mapImg = document.createElement('canvas'); mapImg.width = mapImg.height = mm;
+    const mc = mapImg.getContext('2d'), px = 4;
+    for (let x = 0; x < mm; x += px) for (let y = 0; y < mm; y += px) {
+      const wx = (x / mm - 0.5) * WORLD, wy = (y / mm - 0.5) * WORLD;
+      mc.fillStyle = TERCOL[terrainAt(wx, wy)];
+      mc.fillRect(x, y, px, px);
+    }
+  }
+  ctx.drawImage(mapImg, mx2, my2);
+  ctx.strokeStyle = '#7fd4ff'; ctx.lineWidth = 1.5; ctx.strokeRect(mx2, my2, mm, mm);
+  for (const b of profile.base) {
+    ctx.fillStyle = BUILDINGS[b.t].accent;
+    ctx.fillRect(mx2 + (b.x / WORLD + 0.5) * mm - 2, my2 + (b.y / WORLD + 0.5) * mm - 2, 5, 5);
+  }
+  // view rect on minimap — click jumps the camera there
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+  ctx.strokeRect(mx2 + (cam.x / WORLD + 0.5) * mm - W / 2 / cam.zoom / WORLD * mm,
+               my2 + (cam.y / WORLD + 0.5) * mm - H / 2 / cam.zoom / WORLD * mm,
+               W / cam.zoom / WORLD * mm, H / cam.zoom / WORLD * mm);
+  const mrect = { x: mx2, y: my2, w: mm, h: mm };
+  baseRects.push({ r: mrect, fn: (cx, cy) => {
+    cam.x = ((cx - mx2) / mm - 0.5) * WORLD;
+    cam.y = ((cy - my2) / mm - 0.5) * WORLD;
+  } });
 }
 
-// ---------- draw: editor ----------
 function drawEditor() {
   ctx.fillStyle = '#060a12'; ctx.fillRect(0, 0, W, H);
   const c = edCenter(), ds = CS * ev.k;
@@ -2034,7 +2253,7 @@ function drawEditor() {
         if (sprReady(spr)) ctx.drawImage(spr, r.x + 6, r.y + 4, r.w - 12, r.w - 12);
         else { ctx.fillStyle = T2.color; ctx.fillRect(r.x + 10, r.y + 8, r.w - 20, r.w - 20); }
         ctx.fillStyle = T2.edge; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
-        ctx.fillText(T2.name, r.x + r.w / 2, r.y + r.h - 9);
+        ctx.fillText(T('p_' + k), r.x + r.w / 2, r.y + r.h - 9);
         ctx.fillStyle = '#5a6a8a'; ctx.font = '8px monospace';
         ctx.fillText(String(T2.cost), r.x + r.w / 2, r.y + r.h - 1);
       });
@@ -3195,7 +3414,19 @@ let last = performance.now(), lastMode = mode;
 function loop(now) {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
-  if (mode === 'base' && lastMode !== 'base') baseTick(); // accrue on arrival
+  if (mode === 'base' && lastMode !== 'base') {
+    baseTick(); // accrue on arrival
+    // frame the colony: center on the buildings, zoom to fit the spread
+    migrateBase();
+    if (profile.base.length) {
+      let bx = 0, by = 0, spread = 300;
+      for (const b of profile.base) { bx += b.x; by += b.y; }
+      bx /= profile.base.length; by /= profile.base.length;
+      for (const b of profile.base) spread = Math.max(spread, Math.hypot(b.x - bx, b.y - by) + 400);
+      cam.x = bx; cam.y = by; cam.zoom = Math.max(0.15, Math.min(0.7, Math.min(W, H) / 2 / spread));
+    } else { cam.x = 0; cam.y = 0; cam.zoom = 0.55; }
+    baseSel = -1; buildSpot = null; mapImg = null;
+  }
   lastMode = mode;
   if (mode === 'flight' && !paused) update(dt);
   if (mode === 'planet' && !paused) pUpdate(dt);
