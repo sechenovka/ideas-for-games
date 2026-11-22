@@ -35,10 +35,11 @@ const TYPES = {
   trac:   { cost: 4, hp: 22, color: '#0f2a2a', edge: '#4affe0', name: 'TRAC' },
   rctr:   { cost: 6, hp: 18, color: '#3a2a10', edge: '#ffd27f', name: 'REACTOR' },
   rail:   { cost: 7, hp: 20, color: '#16222e', edge: '#8ae8ff', name: 'RAIL' },
+  decoy:  { cost: 3, hp: 18, color: '#0f2028', edge: '#8ae8ff', name: 'DECOY' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr', 'rail', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr', 'rail', 'decoy', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
@@ -46,7 +47,7 @@ const DEBRIS_COL = {
   gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
   marine: '#2a8a50', pd: '#5a7a9a', repair: '#2a9a70', mines: '#8a3a3a',
   battery: '#3a9a4a', shield: '#4a7ab8', torp: '#a85a3a',
-  jam: '#7a4ab8', trac: '#2aa08a', rctr: '#c89a3a', rail: '#4a9ac8',
+  jam: '#7a4ab8', trac: '#2aa08a', rctr: '#c89a3a', rail: '#4a9ac8', decoy: '#3a7a9a',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -69,7 +70,7 @@ const ROSTER = [
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr', 'rail']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr', 'rail', 'decoy']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -220,6 +221,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyP') autopilot = !autopilot;
   if (e.code === 'KeyA') selectAll();
   if (e.code === 'KeyM') for (const s of selection) if (s.alive) dropMine(s);
+  if (e.code === 'KeyD') for (const s of selection) if (s.alive) launchDecoy(s);
   if (e.code === 'KeyR') mode = 'editor';
   if (e.code === 'Escape') { if (mined) { profile.ore = (profile.ore || 0) + mined; mined = 0; } saveProfile(); raidWarn = Math.random() < 0.4; mode = 'base'; }
   if (e.code === 'KeyL' && won && mission === 'station') initPlanet();
@@ -260,7 +262,7 @@ addEventListener('contextmenu', e => e.preventDefault());
 
 function selectAll() {
   selection.clear();
-  for (const s of allies) if (s.alive && !s.isBase && !s.isCiv) selection.add(s);
+  for (const s of allies) if (s.alive && !s.isBase && !s.isCiv && !s.isDecoy) selection.add(s);
 }
 const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
@@ -375,7 +377,7 @@ function blocksFromList(list) {
     variant: t === 'hull' ? HULL_VARIANTS[Math.floor(Math.random() * HULL_VARIANTS.length)] : t,
     aim: 0,
     pix: new Uint8Array(BP * BP).fill(1), pixCount: BP * BP,
-    barrels: t === 'turret' ? 1 : 0, heat: 0, charges: t === 'mines' ? 4 : 0
+    barrels: t === 'turret' ? 1 : 0, heat: 0, charges: t === 'mines' ? 4 : (t === 'decoy' ? 2 : 0)
   }));
 }
 
@@ -735,7 +737,11 @@ function nearestFoe(s) {
 
 function nearestAlly(f) {
   let best = null, bd = 1e9;
-  for (const s of allies) if (s.alive) { const d = dist(f, s); if (d < bd) { bd = d; best = s; } }
+  for (const s of allies) if (s.alive) {
+    const d = dist(f, s);
+    if (s.isDecoy && d < 420) return s; // a flare screams louder than any hull
+    if (d < bd) { bd = d; best = s; }
+  }
   return best;
 }
 
@@ -1047,6 +1053,22 @@ function dropMine(s) {
   b.charges--;
   mines.push({ x: s.x, y: s.y, vx: s.vx * 0.2, vy: s.vy * 0.2, team: s.team, arm: 1.0, ttl: 90 });
   msg = { text: `MINE OUT — ${b.charges} LEFT`, t: 1.2 };
+}
+
+// decoy flare: a one-block fake that screams on every enemy scope —
+// pirates burn their volleys on it while you flank
+function launchDecoy(s) {
+  const b = s.blocks.find(x => x.type === 'decoy' && (x.charges || 0) > 0);
+  if (!b) return;
+  b.charges--;
+  const dc = makeShip([{ dx: 0, dy: 0, t: 'hull' }], s.x - Math.cos(s.angle) * (s.radius + 30), s.y - Math.sin(s.angle) * (s.radius + 30), 'ally', '#8ae8ff');
+  dc.isDecoy = true;
+  dc.vx = s.vx * 0.5 - Math.cos(s.angle) * 70;
+  dc.vy = s.vy * 0.5 - Math.sin(s.angle) * 70;
+  dc.va = rand(-1.5, 1.5);
+  dc.order = null;
+  allies.push(dc);
+  msg = { text: `DECOY FLARE OUT — ${b.charges} LEFT`, t: 1.4 };
 }
 
 function mineBlast(m) {
@@ -1939,6 +1961,14 @@ function drawShip(s) {
     ctx.beginPath(); ctx.arc(s.x, s.y, s.radius + 6, 0, TAU); ctx.stroke();
     ctx.setLineDash([]);
   }
+  // decoy flare — hologram shimmer so you know it's fake
+  if (s.isDecoy) {
+    const a = 0.25 + 0.2 * Math.sin(time * 9);
+    ctx.strokeStyle = `rgba(138,232,255,${a})`; ctx.lineWidth = 2;
+    ctx.setLineDash([4, 6]);
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.radius + 10, 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+  }
   // live shield bubble — faint cyan skin while the pool holds
   if (s.shield > 1) {
     ctx.strokeStyle = `rgba(90,212,255,${0.14 + 0.06 * Math.sin(time * 3)})`;
@@ -2286,7 +2316,7 @@ function draw() {
   btn(pauseBtn, paused ? 'RESUME' : 'PAUSE', paused);
 
   ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-  ctx.fillText('LMB ship: select (shift=+)   LMB: move/attack   M: mines   RMB drag: pan   wheel: zoom   F: flagship   A: all   Space: pause   P: AI   R: shipyard', 16, H - 16);
+  ctx.fillText('LMB ship: select (shift=+)   LMB: move/attack   M: mines   D: decoy   RMB drag: pan   wheel: zoom   F: flagship   A: all   Space: pause   P: AI   R: shipyard', 16, H - 16);
 
   if (msg) {
     ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
