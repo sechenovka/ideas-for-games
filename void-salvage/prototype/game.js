@@ -87,6 +87,12 @@ let allies = [], foes, station, bullets, particles, stars, planet;
 const selection = new Set(); // ally ships under command
 let rosterSel = new Set();   // chosen escort indices
 let paused = false, autopilot = false, won = false, dead = false, time = 0;
+let mission = 'station', foesDown = 0, beltGoal = 0, elite = null, banked = false;
+const CONTRACTS = {
+  station: { name: 'RAID THE STATION', desc: 'break the shield ring, kill the core, land on the planet', accent: '#ff8a7a' },
+  belt:    { name: 'BELT SWEEP', desc: 'clear 12 hostiles out of the rock field — dodging required', accent: '#8ad4ff' },
+  hunt:    { name: 'ELITE HUNT', desc: 'a pirate flagship and its escorts — bring real guns', accent: '#ffcf6e' },
+};
 let salvage = 0, debris = [], msg = null, reinforced = false;
 // build capacity is the limiter — the workbench field itself is unbounded
 const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + Math.floor(salvage);
@@ -135,7 +141,8 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyP') autopilot = !autopilot;
   if (e.code === 'KeyA') selectAll();
   if (e.code === 'KeyR') mode = 'editor';
-  if (e.code === 'KeyL' && won) initPlanet();
+  if (e.code === 'Escape') { saveProfile(); mode = 'base'; }
+  if (e.code === 'KeyL' && won && mission === 'station') initPlanet();
   if (e.code === 'KeyF') { const f = allies.find(s => s.alive); if (f) { cam.x = f.x; cam.y = f.y; } }
   if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
 });
@@ -312,6 +319,7 @@ function launch() {
   mode = 'flight';
   autopilot = false; paused = false; won = false; dead = false; time = 0;
   debris = []; msg = null; reinforced = false;
+  foesDown = 0; beltGoal = 0; elite = null; banked = false;
   const flag = makeShip(design, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
   cam.x = flag.x; cam.y = flag.y; cam.zoom = 1;
@@ -323,32 +331,81 @@ function launch() {
     allies.push(w); i++;
   }
   selection.clear(); selection.add(flag); // only the flagship is under direct command at start
-  foes = [
-    makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret']]), 750, -380, 'foe', '#ff8a7a'),
-    makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 950, 380, 'foe', '#ff8a7a'),
-    makeShip(gridFromList([[4,2,'engine'],[4,3,'hull'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[3,5,'turret'],[5,5,'turret']]), 1250, -240, 'foe', '#ffb36e')
-  ];
-  for (const f of foes) f.home = { x: f.x, y: f.y };
-  foes[0].role = 'interceptor'; // flies out to meet you
-  foes[1].role = 'interceptor';
-  station = {
-    x: 1600, y: 0, r: 80, coreHp: 350, coreMax: 350,
-    turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true, barrels: 2 }))
-  };
-  // cargo pods — shoot them open for loot
-  pods = [{ x: 300, y: -260, hp: 40 }, { x: 600, y: 420, hp: 40 }, { x: 1100, y: -80, hp: 40 }];
-  waveT = 45;
-  planet = { x: 2400, y: 800, r: 420 };
-  // asteroid field between spawn and the station — destructible cover
+
+  const noStation = { x: 9e9, y: 9e9, r: 0, coreHp: 0, coreMax: 0, turrets: [] };
   asteroids = [];
-  const apos = [[-100, -300], [200, 200], [450, -150], [700, 100], [100, 500], [900, -450], [1200, 350], [1500, -500], [400, -550], [-300, 400]];
-  for (const [ax, ay] of apos) asteroids.push(makeAsteroid(ax + rand(-40, 40), ay + rand(-40, 40), rand(26, 58)));
-  spawnRoamer(); spawnRoamer(); // fast movers already on the map
-  roamerT = 14;
+
+  if (mission === 'belt') {
+    station = noStation; planet = null;
+    beltGoal = 12; waveT = 4;
+    foes = [];
+    for (let k = 0; k < 3; k++) spawnBeltFoe();
+    pods = [{ x: 400, y: -300, hp: 40 }, { x: -200, y: 350, hp: 40 }, { x: 800, y: 200, hp: 40 }];
+    for (let k = 0; k < 16; k++) {
+      const a = rand(0, TAU), d = rand(200, 1100);
+      asteroids.push(makeAsteroid(Math.cos(a) * d, Math.sin(a) * d, rand(24, 62)));
+    }
+    spawnRoamer(); spawnRoamer(); spawnRoamer();
+    roamerT = 7; // the belt is a shooting gallery — rocks everywhere
+  } else if (mission === 'hunt') {
+    station = noStation; planet = null;
+    elite = makeShip(gridFromList([
+      [4,2,'engine'],[5,2,'engine'],[4,3,'armor'],[5,3,'armor'],
+      [4,4,'hull'],[5,4,'hull'],[3,4,'armor'],[6,4,'armor'],
+      [4,5,'turret'],[5,5,'turret'],[3,5,'rocket'],[6,5,'laser'],
+      [4,6,'armor'],[5,6,'armor']
+    ]), 1400, 0, 'foe', '#ffb36e');
+    const e1 = makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret']]), 1500, -300, 'foe', '#ff8a7a');
+    const e2 = makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 1500, 300, 'foe', '#ff8a7a');
+    e1.role = e2.role = 'interceptor';
+    elite.role = 'interceptor';
+    foes = [elite, e1, e2];
+    for (const f of foes) f.home = { x: f.x, y: f.y };
+    pods = [{ x: 600, y: 420, hp: 40 }];
+    const apos = [[-100, -300], [200, 200], [450, -150], [700, 100], [100, 500], [900, -450]];
+    for (const [ax, ay] of apos) asteroids.push(makeAsteroid(ax + rand(-40, 40), ay + rand(-40, 40), rand(26, 58)));
+    spawnRoamer();
+    roamerT = 14;
+  } else { // 'station' — the original raid contract
+    foes = [
+      makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret']]), 750, -380, 'foe', '#ff8a7a'),
+      makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), 950, 380, 'foe', '#ff8a7a'),
+      makeShip(gridFromList([[4,2,'engine'],[4,3,'hull'],[4,4,'hull'],[4,5,'turret'],[3,4,'hull'],[5,4,'hull'],[3,5,'turret'],[5,5,'turret']]), 1250, -240, 'foe', '#ffb36e')
+    ];
+    for (const f of foes) f.home = { x: f.x, y: f.y };
+    foes[0].role = 'interceptor'; // flies out to meet you
+    foes[1].role = 'interceptor';
+    station = {
+      x: 1600, y: 0, r: 80, coreHp: 350, coreMax: 350,
+      turrets: [0, 1, 2, 3, 4, 5].map(j => ({ a: j / 6 * TAU, hp: 55, maxHp: 55, cd: rand(0, 1.4), alive: true, barrels: 2 }))
+    };
+    // cargo pods — shoot them open for loot
+    pods = [{ x: 300, y: -260, hp: 40 }, { x: 600, y: 420, hp: 40 }, { x: 1100, y: -80, hp: 40 }];
+    waveT = 45;
+    planet = { x: 2400, y: 800, r: 420 };
+    // asteroid field between spawn and the station — destructible cover
+    const apos = [[-100, -300], [200, 200], [450, -150], [700, 100], [100, 500], [900, -450], [1200, 350], [1500, -500], [400, -550], [-300, 400]];
+    for (const [ax, ay] of apos) asteroids.push(makeAsteroid(ax + rand(-40, 40), ay + rand(-40, 40), rand(26, 58)));
+    spawnRoamer(); spawnRoamer(); // fast movers already on the map
+    roamerT = 14;
+  }
   bullets = []; particles = [];
   stars = [];
   for (let j = 0; j < 500; j++)
     stars.push({ x: rand(-2500, 5000), y: rand(-2500, 2500), s: rand(0.4, 1.8), d: rand(0.2, 0.9) });
+}
+
+const BELT_DESIGNS = [
+  [[4,3,'engine'],[4,4,'hull'],[4,5,'turret']],
+  [[4,2,'engine'],[4,3,'engine'],[4,4,'hull'],[4,5,'turret']],
+  [[4,3,'engine'],[4,4,'armor'],[4,5,'turret'],[3,4,'hull']],
+  [[4,3,'engine'],[4,4,'hull'],[4,5,'rocket'],[3,4,'armor']],
+];
+function spawnBeltFoe() {
+  const a = rand(0, TAU), d = rand(1200, 1500);
+  const f = makeShip(gridFromList(BELT_DESIGNS[Math.floor(Math.random() * BELT_DESIGNS.length)]), Math.cos(a) * d, Math.sin(a) * d, 'foe', '#ff8a7a');
+  f.role = 'interceptor';
+  foes.push(f);
 }
 
 function makeAsteroid(x, y, r) {
@@ -673,7 +730,7 @@ function checkBlockDead(s, blk) {
   for (let k = 0; k < 3; k++) spawnChunk(bpos.x + rand(-8, 8), bpos.y + rand(-8, 8), dcol, 2 + Math.floor(rand(0, 3)), outA + rand(-0.4, 0.4), s);
   splitCheck(s);
   recount(s);
-  if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); }
+  if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); if (s.team === 'foe' && !s.wreck) foesDown++; }
 }
 
 const pendingWrecks = [];
@@ -767,7 +824,7 @@ function update(dt) {
   }
 
   // reinforcements when the shield ring falls
-  if (!reinforced && station.turrets.every(t => !t.alive)) {
+  if (mission === 'station' && !reinforced && station.turrets.every(t => !t.alive)) {
     reinforced = true;
     msg = { text: 'SHIELD DOWN — REINFORCEMENTS INBOUND', t: 4 };
     const r1 = makeShip(gridFromList([[4,3,'engine'],[4,4,'hull'],[4,5,'turret'],[5,4,'hull']]), station.x + 200, -300, 'foe', '#ff8a7a');
@@ -892,6 +949,29 @@ function update(dt) {
       foes.push(w);
       msg = { text: 'HOSTILE LAUNCHED FROM STATION', t: 3 };
     }
+  }
+
+  // belt sweep: hunters keep dropping in until the quota is cleared
+  if (mission === 'belt' && !won) {
+    waveT -= dt;
+    if (waveT <= 0 && foes.filter(f => f.alive).length < 5 && foesDown < beltGoal) {
+      waveT = 7;
+      spawnBeltFoe();
+      msg = { text: `HOSTILE INBOUND — ${foesDown}/${beltGoal} DOWN`, t: 2.5 };
+    }
+    if (foesDown >= beltGoal) won = true;
+  }
+  // elite hunt: contract is done when the flagship's main hull dies
+  if (mission === 'hunt' && !won && elite && !elite.alive) won = true;
+
+  // contract payout — banked once, straight into the profile
+  if (won && !banked && mission !== 'station') {
+    banked = true;
+    const reward = mission === 'belt' ? { scrap: 60, ore: 15 } : { scrap: 140, ore: 30 };
+    profile.scrap = (profile.scrap || 0) + reward.scrap;
+    profile.ore = (profile.ore || 0) + reward.ore;
+    saveProfile();
+    msg = { text: `CONTRACT PAID: +${reward.scrap} SCRAP  +${reward.ore} ORE`, t: 5 };
   }
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
@@ -1038,8 +1118,27 @@ function drawBase() {
     ctx.fillStyle = accent; ctx.font = 'bold 16px monospace';
     ctx.fillText(label, cx, y + 31);
   };
-  btn(H * 0.45, 'SHIPYARD — build & launch', '#9dff8a', () => { mode = 'editor'; });
-  btn(H * 0.45 + 66, 'BACK TO MENU', '#5a6a8a', () => { mode = 'menu'; });
+  btn(H * 0.42, 'SHIPYARD — build & launch', '#9dff8a', () => { mode = 'editor'; });
+
+  // contract board — pick a job, the shipyard launches into it
+  let y = H * 0.42 + 80;
+  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
+  ctx.fillText('CONTRACTS', cx, y); y += 14;
+  for (const k of Object.keys(CONTRACTS)) {
+    const c = CONTRACTS[k], sel = mission === k;
+    const r = { x: cx - 260, y, w: 520, h: 58 };
+    baseRects.push({ r, fn: () => { mission = k; mode = 'editor'; } });
+    ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = sel ? c.accent : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = c.accent; ctx.font = 'bold 14px monospace';
+    ctx.fillText(`${c.name}${sel ? '  — ACTIVE' : ''}`, cx, y + 22);
+    ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
+    ctx.fillText(c.desc, cx, y + 42);
+    y += 70;
+  }
+  btn(y + 8, 'BACK TO MENU', '#5a6a8a', () => { mode = 'menu'; });
   ctx.textAlign = 'left';
 }
 
@@ -1050,7 +1149,7 @@ function drawEditor() {
   const gs = { x: v.x - 260, y: 60 }; // anchor for labels/stats
 
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 20px monospace';
-  ctx.fillText('SHIPYARD — assemble your bucket', gs.x, gs.y - 46);
+  ctx.fillText(`SHIPYARD — ${CONTRACTS[mission].name}`, gs.x, gs.y - 46);
   ctx.fillStyle = '#5a6a8a'; ctx.font = '13px monospace';
   ctx.fillText('click palette, click near a part to weld it on  •  click a part to rip it off', gs.x, gs.y - 24);
 
@@ -1232,10 +1331,12 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
-  const g = ctx.createRadialGradient(planet.x - 150, planet.y - 150, 50, planet.x, planet.y, planet.r);
-  g.addColorStop(0, '#2a4a6e'); g.addColorStop(1, '#0a1524');
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(planet.x, planet.y, planet.r, 0, TAU); ctx.fill();
+  if (planet) {
+    const g = ctx.createRadialGradient(planet.x - 150, planet.y - 150, 50, planet.x, planet.y, planet.r);
+    g.addColorStop(0, '#2a4a6e'); g.addColorStop(1, '#0a1524');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(planet.x, planet.y, planet.r, 0, TAU); ctx.fill();
+  }
 
   // asteroids (Blender-rendered rocks)
   for (const a of asteroids) {
@@ -1251,6 +1352,7 @@ function draw() {
   }
 
   // station — Blender-rendered hub, slowly rotating
+  if (station.r > 0) {
   ctx.save();
   ctx.translate(station.x, station.y);
   const shielded = station.turrets.some(t => t.alive);
@@ -1279,6 +1381,7 @@ function draw() {
     ctx.restore();
     ctx.fillStyle = '#222'; ctx.fillRect(p.x - 10, p.y - 17, 20, 3);
     ctx.fillStyle = '#ff8a7a'; ctx.fillRect(p.x - 10, p.y - 17, 20 * t.hp / t.maxHp, 3);
+  }
   }
 
   for (const d of debris) {
@@ -1405,7 +1508,13 @@ function draw() {
     ctx.fillText('Space or RESUME to continue', W / 2, H / 2 + 36);
     ctx.textAlign = 'left';
   }
-  if (won) { ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('STATION DESTROYED — L: LAND ON PLANET   R: rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
+  if (won) {
+    const txt = mission === 'station'
+      ? 'STATION DESTROYED — L: LAND ON PLANET   R: rebuild   ESC: base'
+      : 'CONTRACT COMPLETE — R: fly again   ESC: base';
+    ctx.fillStyle = '#9dff8a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(txt, W / 2, H / 2); ctx.textAlign = 'left';
+  }
   if (dead) { ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.fillText('FLAGSHIP LOST — press R to rebuild', W / 2, H / 2); ctx.textAlign = 'left'; }
 }
 
