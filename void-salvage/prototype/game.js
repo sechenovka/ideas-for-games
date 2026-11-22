@@ -34,10 +34,11 @@ const TYPES = {
   jam:    { cost: 4, hp: 20, color: '#241a3a', edge: '#b06aff', name: 'JAM' },
   trac:   { cost: 4, hp: 22, color: '#0f2a2a', edge: '#4affe0', name: 'TRAC' },
   rctr:   { cost: 6, hp: 18, color: '#3a2a10', edge: '#ffd27f', name: 'REACTOR' },
+  rail:   { cost: 7, hp: 20, color: '#16222e', edge: '#8ae8ff', name: 'RAIL' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr', 'rail', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
@@ -45,7 +46,7 @@ const DEBRIS_COL = {
   gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
   marine: '#2a8a50', pd: '#5a7a9a', repair: '#2a9a70', mines: '#8a3a3a',
   battery: '#3a9a4a', shield: '#4a7ab8', torp: '#a85a3a',
-  jam: '#7a4ab8', trac: '#2aa08a', rctr: '#c89a3a',
+  jam: '#7a4ab8', trac: '#2aa08a', rctr: '#c89a3a', rail: '#4a9ac8',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -63,11 +64,12 @@ const ROSTER = [
   { name: 'AEGIS',   desc: 'shield + torp', color: '#5ad4ff', g: [[4,3,'engine'],[4,4,'shield'],[4,5,'torp'],[3,4,'hull'],[5,4,'battery']] },
   { name: 'SPECTER', desc: 'jam + trac',    color: '#b06aff', g: [[4,3,'engine'],[4,4,'jam'],[4,5,'trac'],[3,4,'battery'],[5,4,'turret']] },
   { name: 'NOVA',    desc: 'reactor+laser', color: '#ffd27f', g: [[4,3,'engine'],[4,4,'rctr'],[4,5,'laser'],[3,4,'rctr'],[5,4,'battery']] },
+  { name: 'PIKEMAN', desc: 'railgun sniper', color: '#8ae8ff', g: [[4,3,'engine'],[4,4,'rctr'],[4,5,'rail'],[3,4,'battery'],[5,4,'armor']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr', 'rail']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -355,7 +357,7 @@ function canLaunch() {
   if (!design.length) return { ok: false, why: 'empty hull' };
   if (!n('hull')) return { ok: false, why: 'need HULL' };
   if (!n('engine')) return { ok: false, why: 'need ENGINE' };
-  if (!n('turret') && !n('rocket') && !n('laser') && !n('torp')) return { ok: false, why: 'need a WEAPON' };
+  if (!n('turret') && !n('rocket') && !n('laser') && !n('torp') && !n('rail')) return { ok: false, why: 'need a WEAPON' };
   // hull must be one welded piece — no floating sections
   const seen = new Set([design[0]]), q = [design[0]];
   for (let i = 0; i < q.length; i++)
@@ -598,6 +600,7 @@ const FACTIONS = {
     [[4,2,'engine'],[4,3,'armor'],[4,4,'armor'],[4,5,'turret'],[3,4,'armor'],[5,4,'armor'],[4,6,'shield']],
     [[4,2,'engine'],[4,3,'armor'],[4,4,'hull'],[4,5,'torp'],[3,4,'armor'],[5,4,'shield'],[4,6,'armor']],
     [[4,2,'engine'],[4,3,'armor'],[4,4,'armor'],[4,5,'rocket'],[3,4,'armor'],[5,4,'turret'],[4,6,'shield'],[3,5,'hull']],
+    [[4,2,'engine'],[4,3,'armor'],[4,4,'rctr'],[4,5,'rail'],[3,4,'armor'],[5,4,'shield'],[4,6,'armor']],
   ]},
   cult:   { name: 'VOID CULT', color: '#b06aff', designs: [
     [[4,3,'engine'],[4,4,'hull'],[4,5,'jam'],[3,4,'hull'],[5,4,'mines'],[4,6,'hull']],
@@ -747,7 +750,7 @@ function isJammed(s) {
 function autoFire(s, dt, forced) {
   const jammed = isJammed(s);
   for (const b of s.blocks) {
-    if (b.type !== 'turret' && b.type !== 'rocket' && b.type !== 'laser' && b.type !== 'torp' && b.type !== 'pd') continue;
+    if (b.type !== 'turret' && b.type !== 'rocket' && b.type !== 'laser' && b.type !== 'torp' && b.type !== 'rail' && b.type !== 'pd') continue;
     if (b.type === 'turret' && b.barrels <= 0) continue;
     b.cd -= dt * (jammed ? 0.45 : 1); // jammed fire control = half reload speed
     // point defense: shoots down enemy shells and rockets on approach —
@@ -776,7 +779,7 @@ function autoFire(s, dt, forced) {
     if (jammed) b.aim += rand(-0.24, 0.24); // jammed targeting wobbles hard
     // firing arc: direct-fire weapons mounted near the edge can't shoot
     // through their own hull — only center mounts get the full circle
-    if (b.type === 'turret' || b.type === 'laser') {
+    if (b.type === 'turret' || b.type === 'laser' || b.type === 'rail') {
       const outR = Math.hypot(b.dx, b.dy);
       if (outR > CS * 0.6) {
         const outA = s.angle + Math.atan2(b.dy, b.dx);
@@ -820,6 +823,16 @@ function autoFire(s, dt, forced) {
       b.cd = 6;
       bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(b.aim) * 190, vy: s.vy + Math.sin(b.aim) * 190, ttl: 5.5, dmg: 0, team: s.team, splash: 0, torp: true });
       particles.push({ x: p.x + Math.cos(b.aim) * 16, y: p.y + Math.sin(b.aim) * 16, vx: rand(-15, 15), vy: rand(-15, 15), ttl: 0.3, max: 0.3, color: '#ff8a5c', r: 5 });
+      continue;
+    }
+    // railgun: hypersonic slug, outranges everything, bores through hull
+    if (b.type === 'rail') {
+      if (dist(p, t) > 1200 || s.energy < 8) continue;
+      s.energy -= 8;
+      b.cd = 2.6 * feed;
+      const a = b.aim;
+      bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(a) * 1100, vy: s.vy + Math.sin(a) * 1100, ttl: 1.3, dmg: 18, team: s.team, splash: 0, rail: true, pierce: 5 });
+      particles.push({ x: p.x + Math.cos(a) * 18, y: p.y + Math.sin(a) * 18, vx: -Math.cos(a) * 80 + rand(-20, 20), vy: -Math.sin(a) * 80 + rand(-20, 20), ttl: 0.4, max: 0.4, color: '#8ae8ff', r: 6 });
       continue;
     }
     if (b.cd > 0) continue;
@@ -920,6 +933,15 @@ function hitShip(s, b) {
       if (Math.hypot(bp2.x - bpos.x, bp2.y - bpos.y) < CS * 2.2)
         erodeBlock(s, bl, b.x + rand(-6, 6), b.y + rand(-6, 6), bl === blk ? 20 : 8, 2.6);
     }
+    return;
+  }
+
+  // railgun slug bores a narrow deep hole and keeps flying through the hull
+  if (b.rail) {
+    explode(b.x, b.y, '#8ae8ff', 10);
+    erodeBlock(s, blk, b.x, b.y, 9, 1.1);
+    if (--b.pierce <= 0) b.ttl = 0;
+    else b.ttl = Math.max(b.ttl, 0.4);
     return;
   }
 
@@ -2148,6 +2170,17 @@ function draw() {
   for (const s of allies) if (s.alive && !autopilot) drawOrderMarker(s);
 
   for (const b of bullets) {
+    if (b.rail) {
+      const a = Math.atan2(b.vy, b.vx);
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(a);
+      ctx.strokeStyle = 'rgba(138,232,255,0.75)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(-46, 0); ctx.lineTo(0, 0); ctx.stroke();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(-30, 0); ctx.lineTo(0, 0); ctx.stroke();
+      ctx.fillStyle = '#dffaff'; ctx.fillRect(-2, -2, 5, 4);
+      ctx.restore();
+      continue;
+    }
     if (b.torp) {
       const a = Math.atan2(b.vy, b.vx);
       ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(a);
