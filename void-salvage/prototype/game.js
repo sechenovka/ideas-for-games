@@ -87,7 +87,7 @@ let allies = [], foes, station, bullets, particles, stars, planet;
 const selection = new Set(); // ally ships under command
 let rosterSel = new Set();   // chosen escort indices
 let paused = false, autopilot = false, won = false, dead = false, time = 0;
-let mission = 'station', foesDown = 0, beltGoal = 0, elite = null, banked = false;
+let mission = 'station', foesDown = 0, beltGoal = 0, elite = null, banked = false, mined = 0;
 const CONTRACTS = {
   station: { name: 'RAID THE STATION', desc: 'break the shield ring, kill the core, land on the planet', accent: '#ff8a7a' },
   belt:    { name: 'BELT SWEEP', desc: 'clear 12 hostiles out of the rock field — dodging required', accent: '#8ad4ff' },
@@ -141,7 +141,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyP') autopilot = !autopilot;
   if (e.code === 'KeyA') selectAll();
   if (e.code === 'KeyR') mode = 'editor';
-  if (e.code === 'Escape') { saveProfile(); mode = 'base'; }
+  if (e.code === 'Escape') { if (mined) { profile.ore = (profile.ore || 0) + mined; mined = 0; } saveProfile(); mode = 'base'; }
   if (e.code === 'KeyL' && won && mission === 'station') initPlanet();
   if (e.code === 'KeyF') { const f = allies.find(s => s.alive); if (f) { cam.x = f.x; cam.y = f.y; } }
   if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
@@ -319,7 +319,7 @@ function launch() {
   mode = 'flight';
   autopilot = false; paused = false; won = false; dead = false; time = 0;
   debris = []; msg = null; reinforced = false;
-  foesDown = 0; beltGoal = 0; elite = null; banked = false;
+  foesDown = 0; beltGoal = 0; elite = null; banked = false; mined = 0;
   const flag = makeShip(design, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
   cam.x = flag.x; cam.y = flag.y; cam.zoom = 1;
@@ -897,6 +897,7 @@ function update(dt) {
         if (Math.random() < 0.5) spawnChunk(b.x, b.y, '#5a6170', 1);
         if (a.hp <= 0) {
           a.dead = true; explode(a.x, a.y, '#8a8f9a', 30);
+          mined += Math.round(a.r / 8); // shooting rocks apart is mining too
           for (let k = 0; k < 4; k++) spawnChunk(a.x + rand(-14, 14), a.y + rand(-14, 14), '#5a6170', 2 + Math.floor(rand(0, 3)));
         }
         break;
@@ -969,9 +970,9 @@ function update(dt) {
     banked = true;
     const reward = mission === 'belt' ? { scrap: 60, ore: 15 } : { scrap: 140, ore: 30 };
     profile.scrap = (profile.scrap || 0) + reward.scrap;
-    profile.ore = (profile.ore || 0) + reward.ore;
+    profile.ore = (profile.ore || 0) + reward.ore + mined;
     saveProfile();
-    msg = { text: `CONTRACT PAID: +${reward.scrap} SCRAP  +${reward.ore} ORE`, t: 5 };
+    msg = { text: `CONTRACT PAID: +${reward.scrap} SCRAP  +${reward.ore + mined} ORE`, t: 5 };
   }
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
@@ -1465,13 +1466,19 @@ function draw() {
   ctx.fillStyle = '#9dff8a';
   ctx.fillText(`SELECTED ${selection.size}/${allies.filter(s => s.alive).length}`, 16, hy + 4);
   ctx.fillStyle = '#ffcf6e';
-  ctx.fillText(`SALVAGE +${salvage.toFixed(1)} (next build: ${Math.floor(budget())} scrap)`, 16, hy + 24);
+  ctx.fillText(`SALVAGE +${salvage.toFixed(1)} (next build: ${Math.floor(budget())} scrap)   MINED +${mined}`, 16, hy + 24);
 
-  const tLeft = station.turrets.filter(t => t.alive).length;
   ctx.fillStyle = '#ff8a7a'; ctx.textAlign = 'right';
-  ctx.fillText(`STATION  TURRETS ${tLeft}/6`, W - 16, 24);
-  ctx.fillStyle = '#222'; ctx.fillRect(W - 176, 30, 160, 8);
-  ctx.fillStyle = '#c8a2ff'; ctx.fillRect(W - 176, 30, 160 * Math.max(0, station.coreHp / station.coreMax), 8);
+  if (mission === 'station') {
+    const tLeft = station.turrets.filter(t => t.alive).length;
+    ctx.fillText(`STATION  TURRETS ${tLeft}/6`, W - 16, 24);
+    ctx.fillStyle = '#222'; ctx.fillRect(W - 176, 30, 160, 8);
+    ctx.fillStyle = '#c8a2ff'; ctx.fillRect(W - 176, 30, 160 * Math.max(0, station.coreHp / station.coreMax), 8);
+  } else if (mission === 'belt') {
+    ctx.fillText(`BELT SWEEP  KILLS ${foesDown}/${beltGoal}`, W - 16, 24);
+  } else {
+    ctx.fillText(`ELITE HUNT  ${elite && elite.alive ? 'FLAGSHIP ACTIVE' : 'FLAGSHIP DOWN'}`, W - 16, 24);
+  }
   ctx.textAlign = 'left';
 
   // buttons row
