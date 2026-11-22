@@ -110,10 +110,12 @@ const CONTRACTS = {
   station: { name: 'RAID THE STATION', desc: 'break the shield ring, kill the core, land on the planet', accent: '#ff8a7a' },
   belt:    { name: 'BELT SWEEP', desc: 'clear 12 hostiles out of the rock field — dodging required', accent: '#8ad4ff' },
   hunt:    { name: 'ELITE HUNT', desc: 'a pirate flagship and its escorts — bring real guns', accent: '#ffcf6e' },
+  convoy:  { name: 'ESCORT DUTY', desc: 'a fat hauler is crossing the belt — get it home in one piece', accent: '#9dff8a' },
   defense: { name: 'BASE DEFENSE', desc: 'pirates inbound — hold the line', accent: '#ff8a7a', hidden: true },
 };
 let salvage = 0, debris = [], mines = [], msg = null, reinforced = false;
 let baseShip = null, defWave = 0, baseLost = false, raidWarn = false;
+let hauler = null, haulerLost = false;
 // build capacity is the limiter — the workbench field itself is unbounded
 const depotBonus = () => ((profile && profile.base) || []).reduce((n, b) => n + (b && b.t === 'depot' ? b.lvl * 3 : 0), 0);
 const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + depotBonus() + Math.floor(salvage);
@@ -232,7 +234,7 @@ addEventListener('contextmenu', e => e.preventDefault());
 
 function selectAll() {
   selection.clear();
-  for (const s of allies) if (s.alive && !s.isBase) selection.add(s);
+  for (const s of allies) if (s.alive && !s.isBase && !s.isCiv) selection.add(s);
 }
 const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
@@ -392,7 +394,7 @@ function launch() {
   autopilot = false; paused = false; won = false; dead = false; time = 0;
   debris = []; mines = []; msg = null; reinforced = false;
   foesDown = 0; beltGoal = 0; elite = null; banked = false; mined = 0;
-  baseShip = null; defWave = 0; baseLost = false;
+  baseShip = null; defWave = 0; baseLost = false; hauler = null; haulerLost = false;
   const flag = makeShip(design, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
   cam.x = flag.x; cam.y = flag.y; cam.zoom = 1;
@@ -486,6 +488,23 @@ function launch() {
     foes = []; waveT = 1.5; roamerT = 1e9;
     for (let k = 0; k < 8; k++)
       asteroids.push(makeAsteroid(rand(-400, 1000), rand(-700, 700), rand(26, 54)));
+  } else if (mission === 'convoy') { // shepherd a slow freighter across the belt
+    station = noStation; planet = null; pods = [];
+    hauler = makeShip(gridFromList([
+      [4,2,'engine'],[4,3,'armor'],[5,3,'armor'],
+      [4,4,'hull'],[5,4,'cargo'],[6,4,'cargo'],
+      [4,5,'hull'],[5,5,'cargo'],[6,5,'hull'],
+      [4,6,'armor'],[5,6,'armor']
+    ]), -350, 0, 'ally', '#9dff8a');
+    hauler.isCiv = true; // a civilian — doesn't take orders, just flies the route
+    hauler.order = { kind: 'move', x: 2600, y: 0 };
+    allies.push(hauler);
+    foes = []; waveT = 3; roamerT = 9;
+    for (let k = 0; k < 14; k++) {
+      const ax = rand(200, 2200), ay = rand(-800, 800);
+      asteroids.push(makeAsteroid(ax, ay, rand(24, 60)));
+    }
+    spawnRoamer(); spawnRoamer();
   } else { // 'test' — firing range: dummies, no engines, no guns, no pay
     station = noStation; planet = null;
     foes = [
@@ -1202,6 +1221,30 @@ function update(dt) {
   }
   // elite hunt: contract is done when the flagship dies — or gets boarded
   if (mission === 'hunt' && !won && elite && (!elite.alive || elite.team === 'ally')) won = true;
+  // convoy: hauler crawls to the far edge while pirates keep dropping in
+  if (mission === 'convoy' && !won && !haulerLost) {
+    if (hauler && !hauler.alive) {
+      haulerLost = true; dead = true;
+      msg = { text: 'CONVOY DESTROYED — CONTRACT FAILED', t: 5 };
+    } else if (hauler && hauler.x > 2450) {
+      won = true;
+    } else {
+      waveT -= dt;
+      const alive = foes.filter(f => f.alive && !f.wreck).length;
+      if (waveT <= 0 && alive < 4) {
+        waveT = 13;
+        for (let k = 0; k < 2; k++) {
+          const a = rand(-0.6, 0.6) + (Math.random() < 0.5 ? 0 : Math.PI);
+          const f = makeShip(gridFromList(BELT_DESIGNS[Math.floor(Math.random() * BELT_DESIGNS.length)]),
+            hauler.x + Math.cos(a) * rand(700, 1000), hauler.y + Math.sin(a) * rand(700, 1000), 'foe', '#ff8a7a');
+          f.role = 'interceptor';
+          foes.push(f);
+        }
+        msg = { text: 'RAIDERS INBOUND — COVER THE HAULER', t: 2.5 };
+      }
+    }
+  }
+
   // test range: every dummy scrapped or husked (wrecks don't count)
   if (mission === 'test' && !won && foes.every(f => !f.alive || f.wreck)) won = true;
 
@@ -1236,9 +1279,12 @@ function update(dt) {
   }
 
   // contract payout — banked once, straight into the profile
-  if (won && !banked && (mission === 'belt' || mission === 'hunt' || mission === 'defense')) {
+  if (won && !banked && (mission === 'belt' || mission === 'hunt' || mission === 'defense' || mission === 'convoy')) {
     banked = true;
-    const reward = mission === 'belt' ? { scrap: 60, ore: 15 } : mission === 'defense' ? { scrap: 50, ore: 20 } : { scrap: 140, ore: 30 };
+    const reward = mission === 'belt' ? { scrap: 60, ore: 15 }
+      : mission === 'defense' ? { scrap: 50, ore: 20 }
+      : mission === 'convoy' ? { scrap: 80, ore: 10 }
+      : { scrap: 140, ore: 30 };
     profile.scrap = (profile.scrap || 0) + reward.scrap;
     profile.ore = (profile.ore || 0) + reward.ore + mined;
     saveProfile();
@@ -2026,6 +2072,9 @@ function draw() {
   } else if (mission === 'defense') {
     const hp = baseShip ? baseShip.blocks.length : 0;
     ctx.fillText(`BASE DEFENSE  WAVE ${defWave}/3  BASE HULL ${hp}`, W - 16, 24);
+  } else if (mission === 'convoy') {
+    const left = hauler ? Math.max(0, Math.round((2450 - hauler.x) / 10)) : 0;
+    ctx.fillText(`ESCORT  ${hauler && hauler.alive ? left + 'm TO DOCK' : 'HAULER LOST'}`, W - 16, 24);
   } else {
     ctx.fillText(`TEST RANGE  TARGETS LEFT ${foes.filter(f => f.alive && !f.wreck).length}`, W - 16, 24);
   }
@@ -2078,7 +2127,7 @@ function draw() {
   }
   if (dead) {
     ctx.fillStyle = '#ff8a7a'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(baseLost ? 'BASE OVERRUN — press R to regroup' : 'FLAGSHIP LOST — press R to rebuild', W / 2, H / 2);
+    ctx.fillText(baseLost ? 'BASE OVERRUN — press R to regroup' : haulerLost ? 'CONVOY DESTROYED — press R to retry' : 'FLAGSHIP LOST — press R to rebuild', W / 2, H / 2);
     ctx.textAlign = 'left';
   }
 }
