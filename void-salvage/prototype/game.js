@@ -23,15 +23,16 @@ const TYPES = {
   turret: { cost: 3, hp: 28, color: '#2a4a5e', edge: '#7fd4ff', name: 'GUN' },
   rocket: { cost: 4, hp: 26, color: '#6e3a2a', edge: '#ff8a5c', name: 'ROCKET' },
   laser:  { cost: 5, hp: 24, color: '#3a2a4e', edge: '#ff5c9a', name: 'LASER' },
+  ammo:   { cost: 2, hp: 16, color: '#4a3a1a', edge: '#ffd24a', name: 'AMMO' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
   turret: '#3d4f63', armor: '#6a7078', rocket: '#7a4a3a', cargo: '#a0762a',
-  gyro: '#2a8a6a', laser: '#6a3a6e',
+  gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -47,7 +48,7 @@ const ROSTER = [
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -541,6 +542,17 @@ function autoFire(s, dt, forced) {
     if (!t) { b.aim = s.angle; continue; }
     const p = bw(s, b);
     b.aim = Math.atan2(t.y - p.y, t.x - p.x); // barrel tracks target
+    // firing arc: direct-fire weapons mounted near the edge can't shoot
+    // through their own hull — only center mounts get the full circle
+    if (b.type === 'turret' || b.type === 'laser') {
+      const outR = Math.hypot(b.dx, b.dy);
+      if (outR > CS * 0.6) {
+        const outA = s.angle + Math.atan2(b.dy, b.dx);
+        if (Math.abs(angDiff(outA, Math.atan2(t.y - p.y, t.x - p.x))) > 2.1) { b.aim = outA; continue; }
+      }
+    }
+    // ammo rack next to the gun = faster feeding
+    const feed = s.blocks.some(o => o.type === 'ammo' && Math.hypot(o.dx - b.dx, o.dy - b.dy) <= CS * 1.5) ? 0.7 : 1;
     // laser is a beam, not a bullet: it pours heat into the block under the
     // impact point. Past the melt threshold the metal slumps off as molten
     // drops — armor needs a much longer burn than bare hull
@@ -576,7 +588,7 @@ function autoFire(s, dt, forced) {
       const ax = t.x + (t.vx || 0) * tf - s.vx * tf;
       const ay = t.y + (t.vy || 0) * tf - s.vy * tf;
       const a = Math.atan2(ay - p.y, ax - p.x);
-      b.cd = 2.4;
+      b.cd = 2.4 * feed;
       bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(a) * 280, vy: s.vy + Math.sin(a) * 280, ttl: 3.4, dmg: 26, team: s.team, splash: 2, rocket: true });
       particles.push({ x: p.x + Math.cos(a) * 16, y: p.y + Math.sin(a) * 16, vx: -Math.cos(a) * 50 + rand(-15, 15), vy: -Math.sin(a) * 50 + rand(-15, 15), ttl: 0.35, max: 0.35, color: '#ffb36e', r: 5 });
       continue;
@@ -587,7 +599,7 @@ function autoFire(s, dt, forced) {
     // ships throw every shot sideways past the target
     const ax = t.x + (t.vx || 0) * tf - s.vx * tf;
     const ay = t.y + (t.vy || 0) * tf - s.vy * tf;
-    b.cd = 0.6;
+    b.cd = 0.6 * feed;
     for (let i = 0; i < b.barrels; i++) {
       const a = Math.atan2(ay - p.y, ax - p.x) + (i === 0 ? -0.035 : 0.035) * Math.min(1, b.barrels - 1);
       bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(a) * 400, vy: s.vy + Math.sin(a) * 400, ttl: 2.0, dmg: 11, team: s.team, splash: 0 });
@@ -728,12 +740,27 @@ function checkBlockDead(s, blk) {
   const dcol = DEBRIS_COL[blk.variant || blk.type] || '#888';
   const outA = Math.atan2(bpos.y - s.y, bpos.x - s.x);
   for (let k = 0; k < 3; k++) spawnChunk(bpos.x + rand(-8, 8), bpos.y + rand(-8, 8), dcol, 2 + Math.floor(rand(0, 3)), outA + rand(-0.4, 0.4), s);
+  if (blk.type === 'ammo') ammoBlast(s, bpos); // magazine goes up — chain cooking is real
   splitCheck(s);
   recount(s);
   if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); if (s.team === 'foe' && !s.wreck) foesDown++; }
 }
 
 const pendingWrecks = [];
+
+// a breached magazine cooks off — pixels chewed out of everything close,
+// including your own hull. Keep ammo behind armor or don't mount it
+function ammoBlast(s, pos) {
+  explode(pos.x, pos.y, '#ffd27f', 44);
+  for (const sh of [...allies, ...foes]) {
+    if (!sh.alive) continue;
+    for (const bl of sh.blocks.slice()) {
+      const bp = bw(sh, bl);
+      if (Math.hypot(bp.x - pos.x, bp.y - pos.y) < CS * 2.2)
+        erodeBlock(sh, bl, bp.x + rand(-6, 6), bp.y + rand(-6, 6), 4);
+    }
+  }
+}
 
 // structural integrity: blocks only exist while welded to the hull. Cut the
 // middle out and the severed piece drifts off as its own wreck — guns still
@@ -1283,6 +1310,19 @@ function drawShip(s) {
       ctx.fillRect(-CS / 2, -CS / 2, CS, CS);
     }
     ctx.restore();
+    // firing-arc wedge on selected ships — shows why edge mounts matter
+    if (selection.has(s) && (b.type === 'turret' || b.type === 'laser')) {
+      const outR = Math.hypot(b.dx, b.dy);
+      if (outR > CS * 0.6) {
+        const outA = s.angle + Math.atan2(b.dy, b.dx);
+        ctx.strokeStyle = 'rgba(127,212,255,0.18)'; ctx.lineWidth = 1;
+        for (const off of [-2.1, 2.1]) {
+          ctx.beginPath(); ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p.x + Math.cos(outA + off) * 34, p.y + Math.sin(outA + off) * 34); ctx.stroke();
+        }
+        ctx.beginPath(); ctx.arc(p.x, p.y, 34, outA - 2.1, outA + 2.1); ctx.stroke();
+      }
+    }
     // rotating single barrel — head loss kills the block outright
     if (b.type === 'turret' && b.barrels > 0) {
       ctx.save();
