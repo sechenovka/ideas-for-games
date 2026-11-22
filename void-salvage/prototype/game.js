@@ -22,15 +22,16 @@ const TYPES = {
   engine: { cost: 2, hp: 30, color: '#7a4a2a', edge: '#ff9d5c', name: 'ENGINE' },
   turret: { cost: 3, hp: 28, color: '#2a4a5e', edge: '#7fd4ff', name: 'GUN' },
   rocket: { cost: 4, hp: 26, color: '#6e3a2a', edge: '#ff8a5c', name: 'ROCKET' },
+  laser:  { cost: 5, hp: 24, color: '#3a2a4e', edge: '#ff5c9a', name: 'LASER' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
   turret: '#3d4f63', armor: '#6a7078', rocket: '#7a4a3a', cargo: '#a0762a',
-  gyro: '#2a8a6a',
+  gyro: '#2a8a6a', laser: '#6a3a6e',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -41,11 +42,12 @@ const ROSTER = [
   { name: 'LANCER',  desc: 'rocket pod',   color: '#ff8a5c', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'rocket'],[3,4,'armor']] },
   { name: 'HAULER',  desc: 'cargo, 1 gun', color: '#d4b06a', g: [[4,3,'engine'],[4,4,'cargo'],[4,5,'turret'],[3,4,'hull'],[5,4,'cargo']] },
   { name: 'COLLECTOR', desc: 'gyro + cargo', color: '#3ae8a8', g: [[4,3,'engine'],[4,4,'gyro'],[4,5,'turret'],[3,4,'cargo'],[5,4,'cargo']] },
+  { name: 'BEAMER',  desc: 'melting laser', color: '#ff5c9a', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'laser'],[3,4,'hull'],[5,4,'hull']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -254,7 +256,7 @@ function canLaunch() {
   if (!design.length) return { ok: false, why: 'empty hull' };
   if (!n('hull')) return { ok: false, why: 'need HULL' };
   if (!n('engine')) return { ok: false, why: 'need ENGINE' };
-  if (!n('turret') && !n('rocket')) return { ok: false, why: 'need a WEAPON' };
+  if (!n('turret') && !n('rocket') && !n('laser')) return { ok: false, why: 'need a WEAPON' };
   // hull must be one welded piece — no floating sections
   const seen = new Set([design[0]]), q = [design[0]];
   for (let i = 0; i < q.length; i++)
@@ -272,7 +274,7 @@ function blocksFromList(list) {
     variant: t === 'hull' ? HULL_VARIANTS[Math.floor(Math.random() * HULL_VARIANTS.length)] : t,
     aim: 0,
     pix: new Uint8Array(BP * BP).fill(1), pixCount: BP * BP,
-    barrels: t === 'turret' ? 1 : 0
+    barrels: t === 'turret' ? 1 : 0, heat: 0
   }));
 }
 
@@ -473,7 +475,7 @@ function nearestAlly(f) {
 
 function autoFire(s, dt, forced) {
   for (const b of s.blocks) {
-    if (b.type !== 'turret' && b.type !== 'rocket') continue;
+    if (b.type !== 'turret' && b.type !== 'rocket' && b.type !== 'laser') continue;
     if (b.type === 'turret' && b.barrels <= 0) continue;
     b.cd -= dt;
     let t = null;
@@ -482,6 +484,33 @@ function autoFire(s, dt, forced) {
     if (!t) { b.aim = s.angle; continue; }
     const p = bw(s, b);
     b.aim = Math.atan2(t.y - p.y, t.x - p.x); // barrel tracks target
+    // laser is a beam, not a bullet: it pours heat into the block under the
+    // impact point. Past the melt threshold the metal slumps off as molten
+    // drops — armor needs a much longer burn than bare hull
+    if (b.type === 'laser') {
+      const dd = dist(p, t);
+      if (dd > 540) continue;
+      const ex = p.x + Math.cos(b.aim) * dd, ey = p.y + Math.sin(b.aim) * dd;
+      (s.beams = s.beams || []).push({ x1: p.x, y1: p.y, x2: ex, y2: ey });
+      const hitObj = t.blocks ? t : (forced && forced.blocks ? forced : null);
+      if (hitObj) {
+        let blk = null, bd = 1e9;
+        for (const bl of hitObj.blocks) { const bp = bw(hitObj, bl), d2 = Math.hypot(ex - bp.x, ey - bp.y); if (d2 < bd) { bd = d2; blk = bl; } }
+        if (blk && bd < CS * 1.4) {
+          blk.heat += 950 * dt;
+          const pt = blk.type === 'armor' ? 1600 : 750;
+          if (blk.heat > pt) {
+            blk.meltT = (blk.meltT || 0) + dt;
+            if (blk.meltT > 0.16) { blk.meltT = 0; meltPixels(hitObj, blk, ex, ey, 2); }
+          }
+        }
+      } else if (t === station || forced === station) {
+        station.coreHp -= 40 * dt;
+        if (station.coreHp <= 0 && station.turrets.every(x => !x.alive)) { won = true; explode(station.x, station.y, '#ffffff', 90); }
+      }
+      if (Math.random() < 0.5) particles.push({ x: ex, y: ey, vx: rand(-60, 60), vy: rand(-60, 60), ttl: 0.3, max: 0.3, color: '#ff5c9a', r: 3 });
+      continue;
+    }
     if (b.cd > 0) continue;
     // rocket pods reach farther and burst on a wider circle
     if (b.type === 'rocket') {
@@ -610,6 +639,29 @@ function erodeBlock(s, blk, wx0, wy0, want, rr = 1.6) {
   checkBlockDead(s, blk);
 }
 
+// laser melts instead of chipping: pixels slump off as slow glowing drops
+function meltPixels(s, blk, wx0, wy0, want) {
+  const bpos = bw(s, blk);
+  const c = Math.cos(s.angle), sn = Math.sin(s.angle);
+  const lx = (wx0 - bpos.x) * c + (wy0 - bpos.y) * sn;
+  const ly = -(wx0 - bpos.x) * sn + (wy0 - bpos.y) * c;
+  const px = (lx / CS + 0.5) * BP, py = (ly / CS + 0.5) * BP;
+  let removed = 0, tries = 0;
+  const hot = ['#ffd27f', '#ff8a3a', '#ff5c2a'];
+  while (removed < want && tries < 40) {
+    tries++;
+    const ax = Math.floor(px + rand(-2, 2)), ay = Math.floor(py + rand(-2, 2));
+    if (ax < 0 || ay < 0 || ax >= BP || ay >= BP) continue;
+    const i = ay * BP + ax;
+    if (!blk.pix[i]) continue;
+    blk.pix[i] = 0; blk.pixCount--; removed++;
+    const wx = bpos.x + ((ax / BP - 0.5) * CS) * c - ((ay / BP - 0.5) * CS) * sn;
+    const wy = bpos.y + ((ax / BP - 0.5) * CS) * sn + ((ay / BP - 0.5) * CS) * c;
+    particles.push({ x: wx, y: wy, vx: rand(-25, 25), vy: rand(-25, 25), ttl: rand(0.5, 1.0), max: 1.0, color: hot[Math.floor(Math.random() * 3)], r: 2.5 });
+  }
+  checkBlockDead(s, blk);
+}
+
 function checkBlockDead(s, blk) {
   if (blk.pixCount > Math.floor(BP * BP * 0.2)) return;
   const bpos = bw(s, blk);
@@ -693,6 +745,7 @@ function update(dt) {
           particles.push({ x: ex, y: ey, vx: -Math.cos(s.angle) * 60 + rand(-15, 15), vy: -Math.sin(s.angle) * 60 + rand(-15, 15), ttl: 0.3, max: 0.3, color: '#ff9d5c', r: 3 });
         }
       }
+    s.beams = null;
     autoFire(s, dt, s.order && s.order.kind === 'attack' ? s.order.t : null);
   }
 
@@ -709,6 +762,7 @@ function update(dt) {
     }
     f.angle += f.va * dt;
     f.x += f.vx * dt; f.y += f.vy * dt;
+    f.beams = null;
     autoFire(f, dt, null);
   }
 
@@ -873,6 +927,10 @@ function update(dt) {
     s.vx *= (1 - 1.4 * dt); s.vy *= (1 - 1.4 * dt); s.va *= (1 - 2 * dt);
     s.thrusting = false;
   }
+
+  // heated blocks cool down — hold the beam on target or the metal re-freezes
+  for (const s of [...allies, ...foes])
+    for (const b of s.blocks) if (b.heat > 0) b.heat = Math.max(0, b.heat - 140 * dt);
 
   if (msg) { msg.t -= dt; if (msg.t <= 0) msg = null; }
 
@@ -1118,6 +1176,12 @@ function drawShip(s) {
         ctx.fillRect((i % BP) * ps - CS / 2, Math.floor(i / BP) * ps - CS / 2, ps + 0.6, ps + 0.6);
       }
     }
+    // laser heat — a block glows orange-hot as it approaches the melt point
+    if (b.heat > 80) {
+      const a = Math.min(0.6, b.heat / 1800);
+      ctx.fillStyle = `rgba(255,${Math.floor(160 - a * 140)},30,${a})`;
+      ctx.fillRect(-CS / 2, -CS / 2, CS, CS);
+    }
     ctx.restore();
     // rotating single barrel — head loss kills the block outright
     if (b.type === 'turret' && b.barrels > 0) {
@@ -1236,6 +1300,19 @@ function draw() {
   }
 
   for (const s of [...allies, ...foes]) if (s.alive) drawShip(s);
+
+  // laser beams — fat magenta core, white-hot center line, impact flash
+  for (const s of [...allies, ...foes]) {
+    if (!s.alive || !s.beams) continue;
+    for (const bm of s.beams) {
+      ctx.strokeStyle = 'rgba(255,92,154,0.45)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(bm.x1, bm.y1); ctx.lineTo(bm.x2, bm.y2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,230,244,0.95)'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(bm.x1, bm.y1); ctx.lineTo(bm.x2, bm.y2); ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(bm.x2, bm.y2, 3.2, 0, TAU); ctx.fill();
+    }
+  }
   for (const s of allies) if (s.alive && !autopilot) drawOrderMarker(s);
 
   for (const b of bullets) {
