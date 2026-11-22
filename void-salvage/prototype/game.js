@@ -129,6 +129,9 @@ let hauler = null, haulerLost = false, towGot = 0;
 // build capacity is the limiter — the workbench field itself is unbounded
 const depotBonus = () => ((profile && profile.base) || []).reduce((n, b) => n + (b && b.t === 'depot' ? b.lvl * 3 : 0), 0);
 const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + depotBonus() + Math.floor(salvage);
+// campaign: visible contracts finished — pirates remember your name
+const CAMPAIGN_KEYS = ['station', 'belt', 'hunt', 'convoy', 'tow'];
+const threat = () => CAMPAIGN_KEYS.filter(k => (profile && profile.done || {})[k]).length;
 
 // ---------- base construction ----------
 const BUILDINGS = {
@@ -191,6 +194,14 @@ addEventListener('keydown', e => {
         profile.ore = (profile.ore || 0) + pres.ore;
         profile.fuel = (profile.fuel || 0) + pres.fuel;
         profile.lvl = (profile.lvl || 1) + 1;
+        // the station raid counts toward the campaign board
+        profile.done = profile.done || {};
+        const first = !profile.done.station;
+        profile.done.station = true;
+        if (first && threat() >= CAMPAIGN_KEYS.length && !profile.campaignDone) {
+          profile.campaignDone = true;
+          profile.scrap += 200; profile.ore += 60; profile.lvl += 2;
+        }
         saveProfile();
       }
       mode = 'base';
@@ -1276,7 +1287,7 @@ function update(dt) {
   // belt sweep: hunters keep dropping in until the quota is cleared
   if (mission === 'belt' && !won) {
     waveT -= dt;
-    if (waveT <= 0 && foes.filter(f => f.alive).length < 5 && foesDown < beltGoal) {
+    if (waveT <= 0 && foes.filter(f => f.alive).length < 5 + Math.min(3, threat()) && foesDown < beltGoal) {
       waveT = 7;
       spawnBeltFoe();
       msg = { text: `HOSTILE INBOUND — ${foesDown}/${beltGoal} DOWN`, t: 2.5 };
@@ -1295,7 +1306,7 @@ function update(dt) {
     } else {
       waveT -= dt;
       const alive = foes.filter(f => f.alive && !f.wreck).length;
-      if (waveT <= 0 && alive < 4) {
+      if (waveT <= 0 && alive < 4 + threat()) {
         waveT = 13;
         for (let k = 0; k < 2; k++) {
           const a = rand(-0.6, 0.6) + (Math.random() < 0.5 ? 0 : Math.PI);
@@ -1353,7 +1364,7 @@ function update(dt) {
       const alive = foes.filter(f => f.alive && !f.wreck).length;
       if (!alive && defWave < 3) {
         defWave++;
-        for (let k = 0; k < defWave + 1; k++) {
+        for (let k = 0; k < defWave + 1 + Math.floor(threat() / 2); k++) {
           const a = rand(-0.9, 0.9);
           const f = makeShip(gridFromList(factionDesign()),
             baseShip.x + Math.cos(a) * rand(900, 1300), baseShip.y + Math.sin(a) * rand(900, 1300), 'foe', missionFaction.color);
@@ -1376,8 +1387,17 @@ function update(dt) {
       : { scrap: 140, ore: 30 };
     profile.scrap = (profile.scrap || 0) + reward.scrap;
     profile.ore = (profile.ore || 0) + reward.ore + mined;
-    saveProfile();
+    // campaign progress: first clear of each contract counts toward the board
+    profile.done = profile.done || {};
+    const first = !profile.done[mission];
+    profile.done[mission] = true;
     msg = { text: `CONTRACT PAID: +${reward.scrap} SCRAP  +${reward.ore + mined} ORE`, t: 5 };
+    if (first && threat() >= CAMPAIGN_KEYS.length && !profile.campaignDone) {
+      profile.campaignDone = true;
+      profile.scrap += 200; profile.ore += 60; profile.lvl = (profile.lvl || 1) + 2;
+      msg = { text: 'CAMPAIGN COMPLETE — +200 SCRAP +60 ORE +2 BASE LV', t: 6 };
+    }
+    saveProfile();
   }
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.ttl -= dt; }
@@ -1634,11 +1654,12 @@ function drawBase() {
   lbtn('SHIPYARD — build & launch', '#9dff8a', 46, () => { mode = 'editor'; });
   y += 8;
   ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 15px monospace';
-  ctx.fillText('CONTRACTS', lx, y); y += 10;
+  ctx.fillText(`CONTRACTS — CAMPAIGN ${threat()}/${CAMPAIGN_KEYS.length}`, lx, y); y += 10;
   for (const k of Object.keys(CONTRACTS)) {
     const c = CONTRACTS[k];
     if (c.hidden) continue;
     const sel = mission === k;
+    const done = !!(profile.done || {})[k];
     const r = { x: lx, y, w: lw, h: 54 };
     baseRects.push({ r, fn: () => { mission = k; mode = 'editor'; } });
     ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
@@ -1647,6 +1668,11 @@ function drawBase() {
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.fillStyle = c.accent; ctx.font = 'bold 13px monospace';
     ctx.fillText(`${c.name}${sel ? '  — ACTIVE' : ''}`, r.x + 16, y + 20);
+    if (done) {
+      ctx.fillStyle = '#9dff8a'; ctx.textAlign = 'right';
+      ctx.fillText('CLEARED', r.x + r.w - 14, y + 20);
+      ctx.textAlign = 'left';
+    }
     ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace';
     ctx.fillText(c.desc, r.x + 16, y + 38);
     y += 62;
