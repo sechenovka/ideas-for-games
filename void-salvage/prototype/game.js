@@ -188,7 +188,12 @@ const flagship = () => allies[0];
 
 // ---------- input ----------
 addEventListener('keydown', e => {
-  if (mode === 'editor' && e.code === 'Escape') { persistDesign(); mode = 'base'; return; }
+  if (mode === 'editor') {
+    if (e.code === 'Escape') { persistDesign(); mode = 'base'; return; }
+    if (e.code === 'KeyZ') { if (undoStack.length) design = undoStack.pop(); return; }
+    if (e.code === 'KeyX') { mirrorX = !mirrorX; return; }
+    return;
+  }
   if (mode === 'base' && e.code === 'Escape') { mode = 'menu'; return; }
   if (mode === 'planet') {
     if (e.code === 'KeyR') mode = 'editor';
@@ -231,7 +236,12 @@ addEventListener('keydown', e => {
 addEventListener('mousedown', e => {
   if (mode === 'menu') { if (e.button === 0) menuClick(e.clientX, e.clientY); return; }
   if (mode === 'base') { if (e.button === 0) baseClick(e.clientX, e.clientY); return; }
-  if (mode === 'editor') { if (e.button === 0) editorClick(e.clientX, e.clientY); return; }
+  if (mode === 'editor') {
+    if (e.button !== 0 && e.button !== 2) return;
+    if (editorUIClick(e.clientX, e.clientY)) return; // buttons ate the click
+    startEditDrag(e.clientX, e.clientY, e.button === 2);
+    return;
+  }
   if (mode === 'planet') {
     if (e.button === 1 || e.button === 2) { dragging = true; dragLast = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
     if (e.button === 0) planetClick(e.clientX, e.clientY);
@@ -242,12 +252,13 @@ addEventListener('mousedown', e => {
 });
 addEventListener('mousemove', e => {
   mouse.x = e.clientX; mouse.y = e.clientY;
+  if (mode === 'editor' && editDrag) { editDragTo(e.clientX, e.clientY); return; }
   if (!dragging || (mode !== 'flight' && mode !== 'planet')) return;
   cam.x -= (e.clientX - dragLast.x) / cam.zoom;
   cam.y -= (e.clientY - dragLast.y) / cam.zoom;
   dragLast = { x: e.clientX, y: e.clientY };
 });
-addEventListener('mouseup', () => { dragging = false; });
+addEventListener('mouseup', () => { dragging = false; editDrag = null; });
 addEventListener('wheel', e => {
   if (mode !== 'flight' && mode !== 'planet') return;
   const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
@@ -294,6 +305,7 @@ function designCenter() {
 
 // where the part would land: flush-snap to a neighbor edge, else free offset
 function snapPos(px, py) {
+  if (!design.length) return { dx: Math.round(px / CS) * CS, dy: Math.round(py / CS) * CS }; // empty board seeds anywhere
   let best = null, bd = CS * 0.8;
   for (const p of design) {
     for (const [ox, oy] of [[CS, 0], [-CS, 0], [0, CS], [0, -CS], [CS, CS], [CS, -CS], [-CS, CS], [-CS, -CS]]) {
@@ -311,47 +323,85 @@ function snapPos(px, py) {
   return null;
 }
 
-function editorClick(mx, my) {
+// ---------- editor drag-building ----------
+// LMB paints parts as you drag, RMB (or grabbing a part) rips them off.
+// Z undoes, X mirrors every weld across the hull's centerline.
+let editDrag = null, mirrorX = false;
+const undoStack = [];
+const pushUndo = () => { undoStack.push(deepCopy(design)); if (undoStack.length > 40) undoStack.shift(); };
+const toolRects = [];
+
+function partAt(px, py) {
+  for (const p of design) if (Math.hypot(px - p.dx, py - p.dy) < CS * 0.55) return p;
+  return null;
+}
+function eraseAt(px, py) {
+  const p = partAt(px, py);
+  if (p) design.splice(design.indexOf(p), 1);
+}
+// weld the selected part at the snapped spot; in mirror mode the twin weld
+// lands symmetric about the hull's current centerline, which keeps the
+// design symmetric as long as you keep mirroring
+function tryPlace(px, py) {
+  if (partAt(px, py)) return false;
+  const axis = design.length ? designCenter().dx : null;
+  const sp = snapPos(px, py);
+  if (!sp || designCost() + TYPES[selected].cost > budget()) return false;
+  design.push({ dx: sp.dx, dy: sp.dy, t: selected });
+  if (mirrorX && axis !== null) {
+    const mdx = 2 * axis - sp.dx;
+    if (mdx !== sp.dx && !partAt(mdx, sp.dy) && designCost() + TYPES[selected].cost <= budget())
+      design.push({ dx: mdx, dy: sp.dy, t: selected });
+  }
+  return true;
+}
+const editWorld = (mx, my) => {
+  const v = view(), ctr = designCenter();
+  return { x: (mx - v.x) / v.k + ctr.dx, y: (my - v.y) / v.k + ctr.dy };
+};
+function startEditDrag(mx, my, erase) {
+  pushUndo();
+  const w = editWorld(mx, my);
+  editDrag = (erase || partAt(w.x, w.y)) ? 'erase' : 'paint';
+  if (editDrag === 'erase') eraseAt(w.x, w.y); else tryPlace(w.x, w.y);
+}
+function editDragTo(mx, my) {
+  const w = editWorld(mx, my);
+  if (editDrag === 'erase') eraseAt(w.x, w.y); else tryPlace(w.x, w.y);
+}
+
+function editorUIClick(mx, my) {
   for (const k of KEYS_ORDER) {
     const r = palette[k];
-    if (r && inRect(r, mx, my)) { selected = k; return; }
+    if (r && inRect(r, mx, my)) { selected = k; return true; }
   }
   for (let i = 0; i < ROSTER.length; i++) {
     const r = rosterRects[i];
     if (r && inRect(r, mx, my)) {
       if (rosterSel.has(i)) rosterSel.delete(i);
       else if (rosterSel.size < wingCap()) rosterSel.add(i);
-      return;
+      return true;
     }
   }
-  if (inRect(launchBtn, mx, my)) { if (canLaunch().ok) launch(); return; }
-  if (inRect(testBtn, mx, my)) { if (canLaunch().ok) { mission = 'test'; launch(); } return; }
+  if (inRect(launchBtn, mx, my)) { if (canLaunch().ok) launch(); return true; }
+  if (inRect(testBtn, mx, my)) { if (canLaunch().ok) { mission = 'test'; launch(); } return true; }
+  for (const tb of toolRects) if (inRect(tb.r, mx, my)) { tb.fn(); return true; }
   // blueprint slots: [S] saves the current build in, body loads it back
   for (const bp of bpRects) {
     if (inRect(bp.sr, mx, my)) {
+      pushUndo();
       profile.bps = profile.bps || [null, null, null];
       profile.bps[bp.i] = deepCopy(design);
       saveProfile();
-      return;
+      return true;
     }
     if (inRect(bp.r, mx, my) && profile.bps && profile.bps[bp.i]) {
+      pushUndo();
       design = deepCopy(profile.bps[bp.i]);
-      return;
+      return true;
     }
   }
-  const v = view(), ctr = designCenter();
-  const px = (mx - v.x) / v.k + ctr.dx, py = (my - v.y) / v.k + ctr.dy;
-  // click a part -> rip it off
-  for (const p of design) {
-    if (Math.hypot(px - p.dx, py - p.dy) < CS * 0.55) {
-      if (design.length > 1) design.splice(design.indexOf(p), 1);
-      return;
-    }
-  }
-  const sp = snapPos(px, py);
-  if (!sp) return;
-  if (designCost() + TYPES[selected].cost > budget()) return;
-  design.push({ dx: sp.dx, dy: sp.dy, t: selected });
+  return false;
 }
 
 function canLaunch() {
@@ -1826,7 +1876,7 @@ function drawEditor() {
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 20px monospace';
   ctx.fillText(`SHIPYARD — ${(CONTRACTS[mission] || {}).name || 'TEST RANGE'}`, gs.x, gs.y - 46);
   ctx.fillStyle = '#5a6a8a'; ctx.font = '13px monospace';
-  ctx.fillText('click palette, click near a part to weld it on  •  click a part to rip it off', gs.x, gs.y - 24);
+  ctx.fillText('LMB drag: weld on   RMB / drag a part: rip off   X: mirror   Z: undo   S-chip: save blueprint', gs.x, gs.y - 24);
 
   // workbench surface
   ctx.fillStyle = '#0b1220';
@@ -1848,13 +1898,39 @@ function drawEditor() {
   };
   for (const p of design) drawPart(p.dx, p.dy, p.t, false);
 
-  // ghost preview — shows exactly where the part will weld
+  // mirror centerline + ghost preview — shows exactly where welds land
+  if (mirrorX) {
+    ctx.strokeStyle = 'rgba(200,162,255,0.4)'; ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 6]);
+    ctx.beginPath(); ctx.moveTo(v.x, v.y - 260); ctx.lineTo(v.x, v.y + 260); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#c8a2ff'; ctx.font = 'bold 11px monospace';
+    ctx.fillText('MIRROR', v.x + 8, v.y - 244);
+  }
   {
     const px = (mouse.x - v.x) / v.k + ctr.dx, py = (mouse.y - v.y) / v.k + ctr.dy;
-    let onPart = false;
-    for (const p of design) if (Math.hypot(px - p.dx, py - p.dy) < CS * 0.55) onPart = true;
-    const sp = !onPart && snapPos(px, py);
-    if (sp && designCost() + TYPES[selected].cost <= budget()) drawPart(sp.dx, sp.dy, selected, true);
+    const hp2 = partAt(px, py);
+    if (hp2) {
+      // hovering a part — it rips off under RMB or a drag
+      const x = v.x + (hp2.dx - ctr.dx) * v.k, y = v.y + (hp2.dy - ctr.dy) * v.k;
+      ctx.strokeStyle = 'rgba(255,110,92,0.85)'; ctx.lineWidth = 2;
+      ctx.strokeRect(x - ds / 2, y - ds / 2, ds, ds);
+      ctx.beginPath(); ctx.moveTo(x - 7, y - 7); ctx.lineTo(x + 7, y + 7);
+      ctx.moveTo(x + 7, y - 7); ctx.lineTo(x - 7, y + 7); ctx.stroke();
+    } else {
+      const sp = snapPos(px, py), afford = designCost() + TYPES[selected].cost <= budget();
+      if (sp && !afford) {
+        const x = v.x + (sp.dx - ctr.dx) * v.k, y = v.y + (sp.dy - ctr.dy) * v.k;
+        ctx.globalAlpha = 0.35; ctx.fillStyle = '#ff6e5c';
+        ctx.fillRect(x - ds / 2, y - ds / 2, ds, ds); ctx.globalAlpha = 1;
+      } else if (sp) {
+        drawPart(sp.dx, sp.dy, selected, true);
+        if (mirrorX && design.length) {
+          const axis = designCenter().dx, mdx = 2 * axis - sp.dx;
+          if (mdx !== sp.dx && !partAt(mdx, sp.dy)) drawPart(mdx, sp.dy, selected, true);
+        }
+      }
+    }
   }
 
   // palette
@@ -1949,6 +2025,22 @@ function drawEditor() {
     ctx.strokeStyle = '#9dff8a'; ctx.strokeRect(sr.x, sr.y, sr.w, sr.h);
     ctx.fillStyle = '#9dff8a'; ctx.fillText('S', sr.x + 13, sr.y + 21);
   }
+
+  // build toolbar — undo, mirror, wipe
+  toolRects.length = 0;
+  const toolDefs = [
+    { label: 'UNDO (Z)', accent: '#8ad4ff', fn: () => { if (undoStack.length) design = undoStack.pop(); } },
+    { label: () => mirrorX ? 'MIRROR: ON (X)' : 'MIRROR (X)', accent: '#c8a2ff', fn: () => { mirrorX = !mirrorX; } },
+    { label: 'CLEAR', accent: '#ff8a7a', fn: () => { pushUndo(); design = []; } },
+  ];
+  toolDefs.forEach((t, i) => {
+    const r = { x: px + i * (bw2 + 8), y: by + 40, w: bw2, h: 30 };
+    toolRects.push({ r, fn: t.fn });
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = t.accent; ctx.lineWidth = 1.5; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = t.accent; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(typeof t.label === 'function' ? t.label() : t.label, r.x + r.w / 2, r.y + 19);
+  });
   ctx.textAlign = 'left';
 }
 
