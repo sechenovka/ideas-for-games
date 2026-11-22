@@ -31,10 +31,12 @@ const TYPES = {
   battery:{ cost: 2, hp: 22, color: '#1e3a22', edge: '#6aff7a', name: 'CELL' },
   shield: { cost: 5, hp: 26, color: '#1e2a4a', edge: '#5ad4ff', name: 'SHIELD' },
   torp:   { cost: 6, hp: 24, color: '#3a2a30', edge: '#ff8a5c', name: 'TORP' },
+  jam:    { cost: 4, hp: 20, color: '#241a3a', edge: '#b06aff', name: 'JAM' },
+  trac:   { cost: 4, hp: 22, color: '#0f2a2a', edge: '#4affe0', name: 'TRAC' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
@@ -42,6 +44,7 @@ const DEBRIS_COL = {
   gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
   marine: '#2a8a50', pd: '#5a7a9a', repair: '#2a9a70', mines: '#8a3a3a',
   battery: '#3a9a4a', shield: '#4a7ab8', torp: '#a85a3a',
+  jam: '#7a4ab8', trac: '#2aa08a',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -57,11 +60,12 @@ const ROSTER = [
   { name: 'SAPPER',  desc: 'mines + repair', color: '#ff9d5c', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'mines'],[3,4,'repair'],[5,4,'hull'],[4,6,'turret']] },
   { name: 'VOLT',    desc: 'laser + cells', color: '#6aff7a', g: [[4,3,'engine'],[4,4,'battery'],[4,5,'laser'],[3,4,'battery'],[5,4,'hull']] },
   { name: 'AEGIS',   desc: 'shield + torp', color: '#5ad4ff', g: [[4,3,'engine'],[4,4,'shield'],[4,5,'torp'],[3,4,'hull'],[5,4,'battery']] },
+  { name: 'SPECTER', desc: 'jam + trac',    color: '#b06aff', g: [[4,3,'engine'],[4,4,'jam'],[4,5,'trac'],[3,4,'battery'],[5,4,'turret']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -354,6 +358,10 @@ function recount(s) {
   s.shieldMax = shd * 80;
   s.shieldRegen = shd * 8;
   if (s.shield === undefined || s.shield > s.shieldMax) s.shield = s.shieldMax;
+  // EW suite: jammers scramble enemy fire control, tractors grab hulls
+  const jam = s.blocks.filter(b => b.type === 'jam').length;
+  s.jamR = jam ? 380 + jam * 70 : 0;
+  s.tracN = s.blocks.filter(b => b.type === 'trac').length;
 }
 
 function makeShip(list, x, y, team, color, o = {}) {
@@ -628,11 +636,20 @@ function nearestAlly(f) {
   return best;
 }
 
+// is this ship's fire control being scrambled by an enemy jammer?
+function isJammed(s) {
+  const others = s.team === 'ally' ? foes : allies;
+  for (const o of others)
+    if (o.alive && o.jamR && dist(o, s) < o.jamR) return true;
+  return false;
+}
+
 function autoFire(s, dt, forced) {
+  const jammed = isJammed(s);
   for (const b of s.blocks) {
     if (b.type !== 'turret' && b.type !== 'rocket' && b.type !== 'laser' && b.type !== 'torp' && b.type !== 'pd') continue;
     if (b.type === 'turret' && b.barrels <= 0) continue;
-    b.cd -= dt;
+    b.cd -= dt * (jammed ? 0.45 : 1); // jammed fire control = half reload speed
     // point defense: shoots down enemy shells and rockets on approach —
     // it's the only answer to a missile swarm
     if (b.type === 'pd') {
@@ -656,6 +673,7 @@ function autoFire(s, dt, forced) {
     if (!t) { b.aim = s.angle; continue; }
     const p = bw(s, b);
     b.aim = Math.atan2(t.y - p.y, t.x - p.x); // barrel tracks target
+    if (jammed) b.aim += rand(-0.24, 0.24); // jammed targeting wobbles hard
     // firing arc: direct-fire weapons mounted near the edge can't shoot
     // through their own hull — only center mounts get the full circle
     if (b.type === 'turret' || b.type === 'laser') {
@@ -1001,7 +1019,7 @@ function update(dt) {
           particles.push({ x: ex, y: ey, vx: -Math.cos(s.angle) * 60 + rand(-15, 15), vy: -Math.sin(s.angle) * 60 + rand(-15, 15), ttl: 0.3, max: 0.3, color: '#ff9d5c', r: 3 });
         }
       }
-    s.beams = null;
+    s.beams = null; s.tracBeam = null;
     autoFire(s, dt, s.order && s.order.kind === 'attack' ? s.order.t : null);
   }
 
@@ -1018,8 +1036,25 @@ function update(dt) {
     }
     f.angle += f.va * dt;
     f.x += f.vx * dt; f.y += f.vy * dt;
-    f.beams = null;
+    f.beams = null; f.tracBeam = null;
     autoFire(f, dt, null);
+  }
+
+  // tractor beams: latch onto the nearest enemy hull and drag it in —
+  // boarding range, mine delivery, or just bullying a lighter ship
+  for (const s of [...allies, ...foes]) {
+    if (!s.alive || !s.tracN || s.energy < 6) continue;
+    const others = s.team === 'ally' ? foes : allies;
+    let bt = null, bd = 300;
+    for (const o of others) if (o.alive && !o.isBase) { const d = dist(s, o); if (d < bd) { bd = d; bt = o; } }
+    if (!bt) continue;
+    s.energy -= 6 * dt;
+    const d = dist(s, bt) || 1, pull = 110 * s.tracN;
+    bt.vx += (s.x - bt.x) / d * pull * dt;
+    bt.vy += (s.y - bt.y) / d * pull * dt;
+    s.vx -= (s.x - bt.x) / d * pull * 0.4 * dt; // newton says the tug heaves too
+    s.vy -= (s.y - bt.y) / d * pull * 0.4 * dt;
+    s.tracBeam = { x: bt.x, y: bt.y };
   }
 
   // reinforcements when the shield ring falls
@@ -1863,6 +1898,30 @@ function draw() {
       ctx.beginPath(); ctx.moveTo(bm.x1, bm.y1); ctx.lineTo(bm.x2, bm.y2); ctx.stroke();
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(bm.x2, bm.y2, 3.2, 0, TAU); ctx.fill();
+    }
+  }
+
+  // tractor beams — thick teal tether with a flickering grab end
+  for (const s of [...allies, ...foes]) {
+    if (!s.alive || !s.tracBeam) continue;
+    const tb = s.tracBeam;
+    ctx.strokeStyle = 'rgba(74,255,224,0.4)'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(tb.x, tb.y); ctx.stroke();
+    ctx.strokeStyle = 'rgba(220,255,246,0.9)'; ctx.lineWidth = 1.6;
+    ctx.setLineDash([8, 6]); ctx.lineDashOffset = -time * 60;
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(tb.x, tb.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#4affe0';
+    ctx.beginPath(); ctx.arc(tb.x, tb.y, 4, 0, TAU); ctx.fill();
+  }
+
+  // jammed ships get violet static arcs — your fire control is screaming
+  for (const s of [...allies, ...foes]) {
+    if (!s.alive || !isJammed(s)) continue;
+    ctx.strokeStyle = 'rgba(176,106,255,0.5)'; ctx.lineWidth = 1.5;
+    for (let k = 0; k < 3; k++) {
+      const a = rand(0, TAU);
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.radius + 8 + rand(0, 8), a, a + rand(0.4, 1.1)); ctx.stroke();
     }
   }
   for (const s of allies) if (s.alive && !autopilot) drawOrderMarker(s);
