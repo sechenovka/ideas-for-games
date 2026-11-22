@@ -123,13 +123,21 @@ const L = {
     d_convoy: 'a fat hauler is crossing the belt — get it home in one piece',
     d_tow: 'three dead hulks in the field — drag them to the beacon',
     d_defense: 'pirates inbound — hold the line',
-    ed_back: '◄ BASE  (ESC)', ed_title: 'SHIPYARD',
+    ed_back: '◄ BACK  (ESC)', ed_title: 'SHIP ASSEMBLY', ed_sub: 'Build a ship for the mission',
     ed_hint: 'LMB weld  ·  RMB rip off  ·  E erase-mode  ·  MMB pan  ·  wheel zoom  ·  X mirror  ·  Z undo  ·  H recenter',
-    ed_nose: 'NOSE', ed_parts: 'PARTS', ed_sel: 'selected',
+    ed_nose: 'NOSE', ed_parts: 'MODULES', ed_sel: 'selected', ed_modules: 'MODULES',
+    ed_done: 'DONE', ed_stats: 'CHARACTERISTICS', ed_feats: 'FEATURES',
     ed_build: 'BUILD', ed_erase: 'ERASE', ed_mirror: 'MIRROR (X)', ed_mirron: 'MIRROR: ON',
-    ed_undo: 'UNDO (Z)', ed_clear: 'CLEAR', ed_fleet: 'FLEET',
-    ed_launch: 'LAUNCH', ed_test: 'TEST RANGE',
+    ed_undo: 'UNDO (Z)', ed_clear: 'CLEAR', ed_fleet: 'WINGMEN',
+    ed_launch: 'START MISSION ►', ed_test: 'TEST RANGE',
+    ed_mission: 'MISSION PREP', ed_goal: 'Objective', ed_loc: 'Location',
+    ed_reward: 'Reward', ed_change: '◄ CHANGE MISSION',
+    ed_ready: 'Ship ready to launch!', ed_notready: 'Ship incomplete — check warnings',
+    st_dura: 'Durability', st_energy: 'Energy', st_speed: 'Speed', st_cap: 'Capacity',
     st_mass: 'mass', st_thrust: 'thrust', st_guns: 'guns', st_cost: 'cost', st_over: 'OVER BUDGET!',
+    cat_hull: 'HULL', cat_eng: 'ENGINES', cat_weap: 'WEAPONS', cat_sys: 'SYSTEMS', cat_fleet: 'WINGMEN',
+    f_compact: 'Compact hull', f_agile: 'High maneuverability', f_heavy: 'Heavy armament',
+    f_shield: 'Shielded', f_energy: 'Energy surplus', f_hauler: 'Cargo hauler',
     why_empty: 'EMPTY HULL', why_hull: 'NEED HULL', why_engine: 'NEED ENGINE',
     why_weapon: 'NEED A WEAPON', why_disconnected: 'HULL DISCONNECTED',
   },
@@ -153,13 +161,21 @@ const L = {
     d_convoy: 'жирная баржа идёт через пояс — доведи её целой',
     d_tow: 'три мёртвых корпуса в поле — отбуксируй их на маяк',
     d_defense: 'пираты на подходе — держи оборону',
-    ed_back: '◄ НА БАЗУ  (ESC)', ed_title: 'ВЕРФЬ',
+    ed_back: '◄ НАЗАД  (ESC)', ed_title: 'СБОРКА КОРАБЛЕЙ', ed_sub: 'Создайте корабль для миссии',
     ed_hint: 'ЛКМ ставить  ·  ПКМ срывать  ·  E режим срыва  ·  СКМ сдвиг  ·  колесо зум  ·  X зеркало  ·  Z отмена  ·  H к центру',
-    ed_nose: 'НОС', ed_parts: 'ДЕТАЛИ', ed_sel: 'выбрано',
+    ed_nose: 'НОС', ed_parts: 'МОДУЛИ', ed_sel: 'выбрано', ed_modules: 'МОДУЛИ',
+    ed_done: 'ГОТОВО', ed_stats: 'ХАРАКТЕРИСТИКИ', ed_feats: 'ОСОБЕННОСТИ',
     ed_build: 'СТРОИТЬ', ed_erase: 'СРЫВАТЬ', ed_mirror: 'ЗЕРКАЛО (X)', ed_mirron: 'ЗЕРКАЛО: ВКЛ',
     ed_undo: 'ОТМЕНА (Z)', ed_clear: 'СНЕСТИ', ed_fleet: 'ЭСКАДРА',
-    ed_launch: 'ВЫЛЕТ', ed_test: 'ПОЛИГОН',
+    ed_launch: 'НАЧАТЬ МИССИЮ ►', ed_test: 'ПОЛИГОН',
+    ed_mission: 'ПОДГОТОВКА К МИССИИ', ed_goal: 'Цель', ed_loc: 'Локация',
+    ed_reward: 'Награда', ed_change: '◄ ИЗМЕНИТЬ МИССИЮ',
+    ed_ready: 'Корабль готов к вылету!', ed_notready: 'Корабль не готов — см. предупреждения',
+    st_dura: 'Прочность', st_energy: 'Энергия', st_speed: 'Скорость', st_cap: 'Грузоподъёмность',
     st_mass: 'масса', st_thrust: 'тяга', st_guns: 'стволы', st_cost: 'цена', st_over: 'НЕ ХВАТАЕТ ЛОМА!',
+    cat_hull: 'КОРПУС', cat_eng: 'ДВИГАТЕЛИ', cat_weap: 'ОРУЖИЕ', cat_sys: 'СИСТЕМЫ', cat_fleet: 'ЭСКАДРА',
+    f_compact: 'Компактный корпус', f_agile: 'Высокая манёвренность', f_heavy: 'Тяжёлое вооружение',
+    f_shield: 'Под щитом', f_energy: 'Запас энергии', f_hauler: 'Грузовик',
     why_empty: 'ПУСТОЙ КОРПУС', why_hull: 'НУЖЕН HULL', why_engine: 'НУЖЕН ДВИГАТЕЛЬ',
     why_weapon: 'НУЖНО ОРУЖИЕ', why_disconnected: 'КОРПУС РАЗРВАН',
   },
@@ -381,7 +397,7 @@ const designCost = () => design.reduce((s, p) => s + TYPES[p.t].cost, 0);
 // welded them. Snap is a plain CS grid anchored at world origin; MMB drags
 // the camera, wheel zooms. LMB welds, RMB (or E-mode LMB) rips off.
 const ev = { x: 0, y: 0, k: 1.7 };
-const edCenter = () => ({ x: W * 0.30, y: H * 0.52 });
+const edCenter = () => ({ x: (340 + W - 316) / 2, y: H * 0.44 });
 const edToWorld = (mx, my) => {
   const c = edCenter();
   return { x: ev.x + (mx - c.x) / ev.k, y: ev.y + (my - c.y) / ev.k };
@@ -406,10 +422,22 @@ function designCenter() {
 }
 
 // ---------- editor drag-building ----------
-let editDrag = null, editPanning = null, editTool = 'build', mirrorX = false, edBackRect = null;
+let editDrag = null, editPanning = null, editTool = 'build', mirrorX = false, edBackRect = null, edDoneRect = null, edCardRect = null;
 const undoStack = [];
 const pushUndo = () => { undoStack.push(deepCopy(design)); if (undoStack.length > 40) undoStack.shift(); };
-const toolRects = [];
+const toolRects = [], catRects = [];
+// palette grouped like the reference builder: hull / engines / weapons / systems
+const ED_CATS = [
+  { k: 'cat_hull', parts: ['hull', 'armor', 'cargo'] },
+  { k: 'cat_eng', parts: ['engine', 'gyro'] },
+  { k: 'cat_weap', parts: ['turret', 'rocket', 'laser', 'torp', 'rail', 'mines', 'marine'] },
+  { k: 'cat_sys', parts: ['battery', 'shield', 'pd', 'jam', 'trac', 'rctr', 'repair', 'ammo', 'decoy'] },
+];
+const catOpen = { cat_hull: true, cat_eng: true, cat_weap: true, cat_sys: true, cat_fleet: false };
+const MISSION_REW = {
+  belt: { scrap: 60, ore: 15 }, hunt: { scrap: 140, ore: 30 }, convoy: { scrap: 80, ore: 10 },
+  tow: { scrap: 70, ore: 15 }, defense: { scrap: 50, ore: 20 }, station: { scrap: 100, ore: 25 },
+};
 
 function partAt(px, py) {
   for (const p of design) if (Math.hypot(px - p.dx, py - p.dy) < CS * 0.55) return p;
@@ -446,6 +474,9 @@ function editDragTo(mx, my) {
 
 function editorUIClick(mx, my) {
   if (edBackRect && inRect(edBackRect, mx, my)) { persistDesign(); mode = 'base'; return true; }
+  if (edDoneRect && inRect(edDoneRect, mx, my)) { persistDesign(); mode = 'base'; return true; }
+  if (edCardRect && inRect(edCardRect, mx, my)) { persistDesign(); mode = 'base'; return true; }
+  for (const cr of catRects) if (inRect(cr.r, mx, my)) { catOpen[cr.k] = !catOpen[cr.k]; return true; }
   for (const k of KEYS_ORDER) {
     const r = palette[k];
     if (r && inRect(r, mx, my)) { selected = k; return true; }
@@ -1945,50 +1976,136 @@ function drawBase() {
 
 // ---------- draw: editor ----------
 function drawEditor() {
-  ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#060a12'; ctx.fillRect(0, 0, W, H);
   const c = edCenter(), ds = CS * ev.k;
-  // right panel starts right of the build field
-  const px = Math.max(W * 0.62, c.x + (GRID_LIM + 1) * ds + 30);
-  const pw = W - px - 16;
+  const LPW = 310, RPX = W - 316, RPW = 300;
 
-  // ---------- header: back + title ----------
-  edBackRect = { x: 16, y: 14, w: 190, h: 36 };
+  // ---------- top bar ----------
+  edBackRect = { x: 16, y: 14, w: 130, h: 34 };
   ctx.fillStyle = '#0b1220'; ctx.fillRect(edBackRect.x, edBackRect.y, edBackRect.w, edBackRect.h);
-  ctx.strokeStyle = '#8aa0c8'; ctx.lineWidth = 1.5; ctx.strokeRect(edBackRect.x, edBackRect.y, edBackRect.w, edBackRect.h);
+  ctx.strokeStyle = '#3a4a6a'; ctx.lineWidth = 1.5; ctx.strokeRect(edBackRect.x, edBackRect.y, edBackRect.w, edBackRect.h);
   ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
-  ctx.fillText(T('ed_back'), edBackRect.x + edBackRect.w / 2, edBackRect.y + 23);
+  ctx.fillText(T('ed_back'), edBackRect.x + 65, edBackRect.y + 22);
   ctx.textAlign = 'left';
 
-  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 20px monospace';
-  ctx.fillText(`${T('ed_title')} — ${T('c_' + mission) !== 'c_' + mission ? T('c_' + mission) : ((CONTRACTS[mission] || {}).name || T('ed_test'))}`, 220, 38);
-  ctx.fillStyle = '#5a6a8a'; ctx.font = '12px monospace';
-  ctx.fillText(T('ed_hint'), 220, 58);
+  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 17px monospace';
+  ctx.fillText(T('ed_title'), 164, 30);
+  ctx.fillStyle = '#5a6a8a'; ctx.font = '11px monospace';
+  ctx.fillText(T('ed_sub'), 164, 48);
 
-  // ---------- workbench: fixed grid around world origin ----------
+  ctx.font = 'bold 13px monospace';
+  const rsc = 'SCRAP ' + Math.floor(profile?.scrap ?? 0) + '   ORE ' + Math.floor(profile?.ore ?? 0) + '   BUDGET ' + Math.max(0, Math.floor(budget() - designCost()));
+  const rw = ctx.measureText(rsc).width;
+  edDoneRect = { x: W - 136, y: 14, w: 120, h: 34 };
+  ctx.fillStyle = '#8aa0c8'; ctx.fillText(rsc, W - 156 - rw, 36);
+  ctx.fillStyle = '#12222e'; ctx.fillRect(edDoneRect.x, edDoneRect.y, edDoneRect.w, edDoneRect.h);
+  ctx.strokeStyle = '#8ad4ff'; ctx.lineWidth = 2; ctx.strokeRect(edDoneRect.x, edDoneRect.y, edDoneRect.w, edDoneRect.h);
+  ctx.fillStyle = '#8ad4ff'; ctx.textAlign = 'center';
+  ctx.fillText(T('ed_done') + ' OK', edDoneRect.x + edDoneRect.w / 2, edDoneRect.y + 22);
+  ctx.textAlign = 'left';
+
+  // ---------- left panel: module categories ----------
+  ctx.fillStyle = '#0a101c'; ctx.fillRect(10, 66, LPW, H - 80);
+  ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(10, 66, LPW, H - 80);
+  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 13px monospace';
+  ctx.fillText(T('ed_modules'), 24, 90);
+
+  catRects.length = 0;
+  let ly = 100;
+  const ts = 52;
+  for (const cat of ED_CATS) {
+    const hr = { x: 16, y: ly, w: LPW - 12, h: 26 };
+    catRects.push({ r: hr, k: cat.k });
+    const open = catOpen[cat.k];
+    ctx.fillStyle = open ? '#141c2e' : '#0b1220'; ctx.fillRect(hr.x, hr.y, hr.w, hr.h);
+    ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 12px monospace';
+    ctx.fillText((open ? 'v ' : '> ') + T(cat.k), hr.x + 8, hr.y + 17);
+    ly += 30;
+    if (open) {
+      cat.parts.forEach((k, i) => {
+        const r = { x: 20 + (i % 5) * (ts + 5), y: ly + Math.floor(i / 5) * (ts + 20), w: ts, h: ts + 14 };
+        palette[k] = r;
+        const T2 = TYPES[k], sel = selected === k;
+        ctx.fillStyle = sel ? '#14263e' : '#0b1220';
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeStyle = sel ? T2.edge : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+        const spr = k === 'turret' ? SPRITES.gun_base : SPRITES[k];
+        if (sprReady(spr)) ctx.drawImage(spr, r.x + 6, r.y + 4, r.w - 12, r.w - 12);
+        else { ctx.fillStyle = T2.color; ctx.fillRect(r.x + 10, r.y + 8, r.w - 20, r.w - 20); }
+        ctx.fillStyle = T2.edge; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(T2.name, r.x + r.w / 2, r.y + r.h - 9);
+        ctx.fillStyle = '#5a6a8a'; ctx.font = '8px monospace';
+        ctx.fillText(String(T2.cost), r.x + r.w / 2, r.y + r.h - 1);
+      });
+      ctx.textAlign = 'left';
+      ly += Math.ceil(cat.parts.length / 5) * (ts + 20) + 6;
+    }
+  }
+
+  // fleet collapsible — wingmen chips
+  {
+    const hr = { x: 16, y: ly, w: LPW - 12, h: 26 };
+    catRects.push({ r: hr, k: 'cat_fleet' });
+    const open = catOpen.cat_fleet;
+    ctx.fillStyle = open ? '#141c2e' : '#0b1220'; ctx.fillRect(hr.x, hr.y, hr.w, hr.h);
+    ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 12px monospace';
+    ctx.fillText((open ? 'v ' : '> ') + T('cat_fleet') + ' (' + rosterSel.size + '/' + wingCap() + ')', hr.x + 8, hr.y + 17);
+    ly += 30;
+    if (open) {
+      rosterRects.length = 0;
+      ROSTER.forEach((r, i) => {
+        const rc = { x: 20 + (i % 2) * 146, y: ly + Math.floor(i / 2) * 28, w: 140, h: 24 };
+        rosterRects[i] = rc;
+        const sel = rosterSel.has(i);
+        ctx.fillStyle = sel ? '#14261c' : '#0b1220'; ctx.fillRect(rc.x, rc.y, rc.w, rc.h);
+        ctx.strokeStyle = sel ? '#9dff8a' : '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
+        ctx.fillStyle = sel ? '#9dff8a' : '#8aa0c8'; ctx.font = 'bold 9px monospace';
+        ctx.fillText(r.name, rc.x + 6, rc.y + 16);
+      });
+      ly += Math.ceil(ROSTER.length / 2) * 28 + 4;
+    }
+  }
+
+  // tools strip at left panel bottom
+  toolRects.length = 0;
+  const toolDefs = [
+    { label: () => editTool === 'erase' ? T('ed_erase') : T('ed_build'), accent: editTool === 'erase' ? '#ff8a7a' : '#9dff8a', fn: () => { editTool = editTool === 'erase' ? 'build' : 'erase'; } },
+    { label: () => mirrorX ? T('ed_mirron') : T('ed_mirror'), accent: '#c8a2ff', fn: () => { mirrorX = !mirrorX; } },
+    { label: T('ed_undo'), accent: '#8ad4ff', fn: () => { if (undoStack.length) design = undoStack.pop(); } },
+    { label: T('ed_clear'), accent: '#ff8a7a', fn: () => { pushUndo(); design = []; } },
+  ];
+  const tby = H - 46;
+  toolDefs.forEach((t, i) => {
+    const r = { x: 16 + i * 74, y: tby, w: 70, h: 30 };
+    toolRects.push({ r, fn: t.fn });
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = t.accent; ctx.lineWidth = 1; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = t.accent; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(typeof t.label === 'function' ? t.label() : t.label, r.x + r.w / 2, r.y + 18);
+  });
+  ctx.textAlign = 'left';
+
+  // ---------- center workbench: fixed grid ----------
   const x0 = c.x + (-GRID_LIM - 0.5 - ev.x) * ev.k, x1 = c.x + (GRID_LIM + 0.5 - ev.x) * ev.k;
   const y0 = c.y + (-GRID_LIM - 0.5 - ev.y) * ev.k, y1 = c.y + (GRID_LIM + 0.5 - ev.y) * ev.k;
-  ctx.fillStyle = '#0b1220'; ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
-  ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 1.5;
-  ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
-  // cell lines — aligned with the real snap grid
-  ctx.strokeStyle = 'rgba(60,80,120,0.18)'; ctx.lineWidth = 1;
+  ctx.fillStyle = '#0a0f1a'; ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+  ctx.strokeStyle = 'rgba(60,80,120,0.14)'; ctx.lineWidth = 1;
   for (let g = -GRID_LIM; g <= GRID_LIM + 1; g++) {
     const sx = c.x + (g - 0.5 - ev.x) * ev.k, sy = c.y + (g - 0.5 - ev.y) * ev.k;
     ctx.beginPath(); ctx.moveTo(sx, Math.min(y0, y1)); ctx.lineTo(sx, Math.max(y0, y1)); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(Math.min(x0, x1), sy); ctx.lineTo(Math.max(x0, x1), sy); ctx.stroke();
   }
-  // axes through origin — brighter, dy=0 line is also the mirror axis
   const ox = c.x - ev.x * ev.k, oy = c.y - ev.y * ev.k;
-  ctx.strokeStyle = mirrorX ? 'rgba(200,162,255,0.55)' : 'rgba(127,212,255,0.3)'; ctx.lineWidth = 1.5;
+  ctx.strokeStyle = mirrorX ? 'rgba(200,162,255,0.55)' : 'rgba(127,212,255,0.28)'; ctx.lineWidth = 1.5;
   if (mirrorX) ctx.setLineDash([4, 6]);
   ctx.beginPath(); ctx.moveTo(ox, Math.min(y0, y1)); ctx.lineTo(ox, Math.max(y0, y1)); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.strokeStyle = 'rgba(127,212,255,0.2)';
+  ctx.strokeStyle = 'rgba(127,212,255,0.18)';
   ctx.beginPath(); ctx.moveTo(Math.min(x0, x1), oy); ctx.lineTo(Math.max(x0, x1), oy); ctx.stroke();
   if (mirrorX) { ctx.fillStyle = '#c8a2ff'; ctx.font = 'bold 11px monospace'; ctx.fillText('MIRROR', ox + 8, Math.min(y0, y1) + 16); }
-  // nose marker — ships fly toward +dx (right on screen, engines go left)
-  ctx.fillStyle = 'rgba(127,212,255,0.5)'; ctx.font = 'bold 11px monospace';
-  ctx.fillText(T('ed_nose') + ' ►', ox + 8, oy - 10);
+  ctx.fillStyle = 'rgba(127,212,255,0.45)'; ctx.font = 'bold 11px monospace';
+  ctx.fillText(T('ed_nose') + ' >', ox + 8, oy - 10);
 
   const drawPart = (dx, dy, t, ghost) => {
     const s = edToScreen(dx, dy);
@@ -2001,7 +2118,18 @@ function drawEditor() {
   };
   for (const p of design) drawPart(p.dx, p.dy, p.t, false);
 
-  // ghost preview — red frame on an existing part (rip-off), else weld ghost
+  // corner brackets around the built hull
+  if (design.length) {
+    let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
+    for (const p of design) { const s = edToScreen(p.dx, p.dy); bx0 = Math.min(bx0, s.x); by0 = Math.min(by0, s.y); bx1 = Math.max(bx1, s.x); by1 = Math.max(by1, s.y); }
+    ctx.strokeStyle = 'rgba(127,212,255,0.5)'; ctx.lineWidth = 1.5;
+    const pad = 8;
+    for (const [cx2, cy2, ddx, ddy] of [[bx0 - pad, by0 - pad, 1, 1], [bx1 + pad, by0 - pad, -1, 1], [bx0 - pad, by1 + pad, 1, -1], [bx1 + pad, by1 + pad, -1, -1]]) {
+      ctx.beginPath(); ctx.moveTo(cx2, cy2 + 14 * ddy); ctx.lineTo(cx2, cy2); ctx.lineTo(cx2 + 14 * ddx, cy2); ctx.stroke();
+    }
+  }
+
+  // ghost / hover
   {
     const w = edToWorld(mouse.x, mouse.y), hp2 = partAt(w.x, w.y);
     if (hp2) {
@@ -2025,122 +2153,117 @@ function drawEditor() {
       }
     }
   }
-
-  // ---------- right panel ----------
-  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
-  ctx.fillText(T('ed_parts'), px, 34);
-
-  // parts palette — compact icon tiles, as many columns as fit
-  const tw = 60, th = 62, cols = Math.max(2, Math.floor(pw / (tw + 6)));
-  KEYS_ORDER.forEach((k, i) => {
-    const r = { x: px + (i % cols) * (tw + 6), y: 46 + Math.floor(i / cols) * (th + 6), w: tw, h: th };
-    palette[k] = r;
-    const T2 = TYPES[k], sel = selected === k;
-    ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
-    ctx.fillRect(r.x, r.y, r.w, r.h);
-    ctx.strokeStyle = sel ? T2.edge : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
-    ctx.strokeRect(r.x, r.y, r.w, r.h);
-    const spr = k === 'turret' ? SPRITES.gun_base : SPRITES[k];
-    if (sprReady(spr)) ctx.drawImage(spr, r.x + tw / 2 - 15, r.y + 5, 30, 30);
-    else { ctx.fillStyle = T2.color; ctx.fillRect(r.x + tw / 2 - 12, r.y + 8, 24, 24); }
-    ctx.fillStyle = T2.edge; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(T2.name, r.x + tw / 2, r.y + th - 17);
-    ctx.fillStyle = '#5a6a8a'; ctx.font = '9px monospace';
-    ctx.fillText(T2.cost + ' ' + T('scrap'), r.x + tw / 2, r.y + th - 6);
-  });
+  ctx.fillStyle = '#46566e'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(T('ed_hint'), c.x, Math.min(Math.max(y0, y1) + 24, H - 130));
   ctx.textAlign = 'left';
 
-  // selected part name line
-  const py0 = 46 + Math.ceil(KEYS_ORDER.length / cols) * (th + 6) + 8;
-  ctx.fillStyle = TYPES[selected].edge; ctx.font = 'bold 13px monospace';
-  ctx.fillText(`▸ ${TYPES[selected].name} — ${TYPES[selected].cost} ${T('scrap')}   ${T('ed_sel')}`, px, py0);
+  // ---------- right panel: characteristics ----------
+  ctx.fillStyle = '#0a101c'; ctx.fillRect(RPX - 8, 66, RPW + 8, 330);
+  ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(RPX - 8, 66, RPW + 8, 330);
+  const n = t => design.filter(x => x.t === t).length;
+  const mass = design.length, eng = n('engine');
+  const dura = design.reduce((s, p) => s + TYPES[p.t].hp, 0);
+  const emax = 30 + n('battery') * 60 + n('rctr') * 40;
+  const speed = eng ? Math.round(eng * 220 / Math.max(1, mass * 0.5)) : 0;
+  const cap = designCost(), capMax = Math.floor(budget());
 
-  // tools row — build/erase toggle, mirror, undo, clear
-  toolRects.length = 0;
-  const ty = py0 + 10, tbw = Math.floor((pw - 18) / 4);
-  const toolDefs = [
-    { label: () => editTool === 'erase' ? T('ed_erase') : T('ed_build'), accent: editTool === 'erase' ? '#ff8a7a' : '#9dff8a', fn: () => { editTool = editTool === 'erase' ? 'build' : 'erase'; } },
-    { label: () => mirrorX ? T('ed_mirron') : T('ed_mirror'), accent: '#c8a2ff', fn: () => { mirrorX = !mirrorX; } },
-    { label: T('ed_undo'), accent: '#8ad4ff', fn: () => { if (undoStack.length) design = undoStack.pop(); } },
-    { label: T('ed_clear'), accent: '#ff8a7a', fn: () => { pushUndo(); design = []; } },
-  ];
-  toolDefs.forEach((t, i) => {
-    const r = { x: px + i * (tbw + 6), y: ty, w: tbw, h: 30 };
-    toolRects.push({ r, fn: t.fn });
-    ctx.fillStyle = '#0b1220'; ctx.fillRect(r.x, r.y, r.w, r.h);
-    ctx.strokeStyle = t.accent; ctx.lineWidth = 1.5; ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = t.accent; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(typeof t.label === 'function' ? t.label() : t.label, r.x + r.w / 2, r.y + 19);
+  ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 14px monospace';
+  ctx.fillText(T('ed_stats'), RPX + 6, 92);
+  const statBar = (label, val, max, y, fmt) => {
+    ctx.fillStyle = '#8aa0c8'; ctx.font = '12px monospace';
+    ctx.fillText(label, RPX + 6, y + 12);
+    ctx.fillStyle = '#cfe2ff'; ctx.textAlign = 'right';
+    ctx.fillText(fmt || String(val), RPX + RPW - 14, y + 12);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#141c2e'; ctx.fillRect(RPX + 6, y + 20, RPW - 20, 8);
+    ctx.fillStyle = '#4a9adf'; ctx.fillRect(RPX + 6, y + 20, Math.min(1, val / Math.max(1, max)) * (RPW - 20), 8);
+  };
+  statBar(T('st_dura'), dura, 2400, 100);
+  statBar(T('st_energy'), emax, 400, 136);
+  statBar(T('st_speed'), speed, 500, 172, speed + ' u/s');
+  statBar(T('st_cap'), cap, capMax, 208, cap + ' / ' + capMax);
+
+  ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 12px monospace';
+  ctx.fillText(T('ed_feats'), RPX + 6, 256);
+  const feats = [];
+  if (mass > 0 && mass <= 10) feats.push('f_compact');
+  if (speed >= 300) feats.push('f_agile');
+  if (n('turret') + n('rocket') + n('laser') + n('rail') >= 4) feats.push('f_heavy');
+  if (n('shield')) feats.push('f_shield');
+  if (emax >= 150) feats.push('f_energy');
+  if (n('cargo') >= 3) feats.push('f_hauler');
+  feats.slice(0, 5).forEach((f, i) => {
+    ctx.fillStyle = '#9dff8a'; ctx.font = '11px monospace';
+    ctx.fillText('[+]', RPX + 10, 278 + i * 20);
+    ctx.fillStyle = '#8aa0c8';
+    ctx.fillText(T(f), RPX + 40, 278 + i * 20);
   });
-  ctx.textAlign = 'left';
 
   // blueprint slots
   profile.bps = profile.bps || [null, null, null];
   bpRects.length = 0;
-  const bw2 = Math.floor((pw - 12) / 3), by = ty + 40;
+  const bby = 420;
   for (let i = 0; i < 3; i++) {
-    const r = { x: px + i * (bw2 + 6), y: by, w: bw2 - 24, h: 30 };
-    const sr = { x: r.x + r.w, y: by, w: 24, h: 30 };
+    const r = { x: RPX + 6 + i * 98, y: bby, w: 72, h: 28 };
+    const sr = { x: r.x + r.w, y: bby, w: 20, h: 28 };
     bpRects.push({ r, sr, i });
     const full = profile.bps[i];
     ctx.fillStyle = full ? '#141c2e' : '#0b1220';
-    ctx.strokeStyle = full ? '#8ad4ff' : '#3a4a6a'; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = full ? '#8ad4ff' : '#3a4a6a'; ctx.lineWidth = 1;
     ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = full ? '#8ad4ff' : '#4a5a7a';
-    ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(full ? `BP${i + 1} · ${full.length}p` : `BP${i + 1}`, r.x + r.w / 2, r.y + 19);
+    ctx.fillStyle = full ? '#8ad4ff' : '#4a5a7a'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(full ? 'BP' + (i + 1) + ':' + full.length : 'BP' + (i + 1), r.x + r.w / 2, r.y + 18);
     ctx.fillStyle = '#1d3a24'; ctx.fillRect(sr.x, sr.y, sr.w, sr.h);
     ctx.strokeStyle = '#9dff8a'; ctx.strokeRect(sr.x, sr.y, sr.w, sr.h);
-    ctx.fillStyle = '#9dff8a'; ctx.fillText('S', sr.x + 12, sr.y + 20);
+    ctx.fillStyle = '#9dff8a'; ctx.fillText('S', sr.x + 10, sr.y + 19);
   }
   ctx.textAlign = 'left';
 
-  // fleet roster — compact chips under the blueprint row
-  const ry0 = by + 48;
+  // ---------- bottom: mission prep card + launch ----------
+  const mcy = H - 118;
+  const mcx = LPW + 24, mcw = Math.min(560, RPX - LPW - 70);
+  edCardRect = { x: mcx, y: mcy, w: mcw, h: 104 };
+  ctx.fillStyle = '#0a101c'; ctx.fillRect(mcx, mcy, mcw, 104);
+  ctx.strokeStyle = '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(mcx, mcy, mcw, 104);
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 12px monospace';
-  ctx.fillText(`${T('ed_fleet')} (${rosterSel.size}/${wingCap()})`, px, ry0 - 8);
-  const rw = Math.floor((pw - 12) / 3);
-  ROSTER.forEach((r, i) => {
-    const rc = { x: px + (i % 3) * (rw + 6), y: ry0 + Math.floor(i / 3) * 28, w: rw, h: 24 };
-    rosterRects[i] = rc;
-    const sel = rosterSel.has(i);
-    ctx.fillStyle = sel ? '#14261c' : '#0b1220';
-    ctx.fillRect(rc.x, rc.y, rc.w, rc.h);
-    ctx.strokeStyle = sel ? '#9dff8a' : '#1a2438'; ctx.lineWidth = sel ? 2 : 1;
-    ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
-    for (const [rr, cc, t] of r.g.slice(0, 6)) {
-      const mx = rc.x + 3 + (cc - 1) * 5, my = rc.y + 4 + (rr - 2) * 5;
-      const spr = t === 'turret' ? SPRITES.gun_base : SPRITES[t];
-      if (sprReady(spr)) ctx.drawImage(spr, mx, my, 4, 4);
-      else { ctx.fillStyle = TYPES[t].color; ctx.fillRect(mx, my, 4, 4); }
-    }
-    ctx.fillStyle = sel ? '#9dff8a' : '#8aa0c8'; ctx.font = 'bold 9px monospace';
-    ctx.fillText(r.name, rc.x + 34, rc.y + 16);
-  });
+  ctx.fillText(T('ed_mission'), mcx + 14, mcy + 22);
+  const cname = T('c_' + mission) !== 'c_' + mission ? T('c_' + mission) : ((CONTRACTS[mission] || {}).name || T('ed_test'));
+  const cdesc = T('d_' + mission) !== 'd_' + mission ? T('d_' + mission) : ((CONTRACTS[mission] || {}).desc || '');
+  const rew = MISSION_REW[mission];
+  ctx.fillStyle = '#8aa0c8'; ctx.font = '11px monospace';
+  ctx.fillText(T('ed_goal') + ': ' + cname, mcx + 14, mcy + 44);
+  ctx.fillStyle = '#5a6a8a';
+  ctx.fillText(cdesc.slice(0, 90), mcx + 14, mcy + 62);
+  if (rew) { ctx.fillStyle = '#ffcf6e'; ctx.fillText(T('ed_reward') + ': +' + rew.scrap + ' ' + T('scrap') + ' +' + rew.ore + ' ' + T('ore'), mcx + 14, mcy + 84); }
+  ctx.fillStyle = '#5a7a9a'; ctx.font = '10px monospace';
+  ctx.fillText(T('ed_change'), mcx + 14, mcy + 98);
 
-  // ---------- bottom pinned: stats + launch ----------
-  const n = t => design.filter(x => x.t === t).length;
-  const mass = design.length, eng = n('engine');
-  ctx.fillStyle = '#8aa0c8'; ctx.font = '13px monospace';
-  ctx.fillText(`${T('st_mass')} ${mass}   ${T('st_thrust')} ${eng ? Math.round(eng * 220 / (mass * 0.5)) : 0}   ${T('st_guns')} ${n('turret') + n('rail') + n('rocket')}   ${T('st_cost')} ${designCost()}/${Math.floor(budget())} ${T('scrap')}${salvage ? '  (+' + salvage.toFixed(1) + ')' : ''}`, px, H - 108);
-  if (designCost() > budget()) { ctx.fillStyle = '#ff6e5c'; ctx.fillText(T('st_over'), px, H - 90); }
-
+  // launch block — big green button
   const chk = canLaunch();
-  const ly = H - 56;
-  launchBtn.x = px; launchBtn.y = ly; launchBtn.w = Math.floor(pw * 0.52); launchBtn.h = 44;
-  testBtn.x = launchBtn.x + launchBtn.w + 8; testBtn.y = ly; testBtn.w = pw - launchBtn.w - 8; testBtn.h = 44;
-  ctx.fillStyle = chk.ok ? '#1d3a24' : '#141c2e';
+  const lbx = RPX - 8, lbw = RPW + 8;
+  ctx.fillStyle = '#0a101c'; ctx.fillRect(lbx, mcy, lbw, 104);
+  ctx.strokeStyle = chk.ok ? '#2a5a34' : '#1a2438'; ctx.lineWidth = 1; ctx.strokeRect(lbx, mcy, lbw, 104);
+  ctx.fillStyle = chk.ok ? '#9dff8a' : '#ff8a7a'; ctx.font = 'bold 13px monospace';
+  ctx.fillText(chk.ok ? '[OK] ' + T('ed_ready') : '[!] ' + T('ed_notready'), lbx + 14, mcy + 22);
+  if (!chk.ok || designCost() > budget()) {
+    ctx.fillStyle = '#c8847a'; ctx.font = '11px monospace';
+    ctx.fillText(designCost() > budget() ? T('st_over') : T(chk.why), lbx + 14, mcy + 40);
+  }
+
+  launchBtn.x = lbx + 10; launchBtn.y = mcy + 48; launchBtn.w = Math.floor((lbw - 26) * 0.68); launchBtn.h = 46;
+  ctx.fillStyle = chk.ok ? '#1d4a24' : '#141c2e';
   ctx.strokeStyle = chk.ok ? '#9dff8a' : '#4a5a7a'; ctx.lineWidth = 2;
   ctx.fillRect(launchBtn.x, launchBtn.y, launchBtn.w, launchBtn.h);
   ctx.strokeRect(launchBtn.x, launchBtn.y, launchBtn.w, launchBtn.h);
   ctx.fillStyle = chk.ok ? '#9dff8a' : '#5a6a8a';
-  ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center';
-  ctx.fillText(chk.ok ? T('ed_launch') : T(chk.why), launchBtn.x + launchBtn.w / 2, launchBtn.y + 28);
+  ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(chk.ok ? T('ed_launch') : T(chk.why), launchBtn.x + launchBtn.w / 2, launchBtn.y + 29);
+  testBtn.x = launchBtn.x + launchBtn.w + 6; testBtn.y = mcy + 48; testBtn.w = lbw - 26 - launchBtn.w; testBtn.h = 46;
   ctx.fillStyle = chk.ok ? '#12222e' : '#141c2e';
   ctx.strokeStyle = chk.ok ? '#8ad4ff' : '#4a5a7a'; ctx.lineWidth = 2;
   ctx.fillRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
   ctx.strokeRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
-  ctx.fillStyle = chk.ok ? '#8ad4ff' : '#5a6a8a';
+  ctx.fillStyle = chk.ok ? '#8ad4ff' : '#5a6a8a'; ctx.font = 'bold 11px monospace';
   ctx.fillText(T('ed_test'), testBtn.x + testBtn.w / 2, testBtn.y + 28);
   ctx.textAlign = 'left';
 }
