@@ -24,15 +24,18 @@ const TYPES = {
   rocket: { cost: 4, hp: 26, color: '#6e3a2a', edge: '#ff8a5c', name: 'ROCKET' },
   laser:  { cost: 5, hp: 24, color: '#3a2a4e', edge: '#ff5c9a', name: 'LASER' },
   ammo:   { cost: 2, hp: 16, color: '#4a3a1a', edge: '#ffd24a', name: 'AMMO' },
+  marine: { cost: 3, hp: 25, color: '#1e3a2a', edge: '#5affa0', name: 'MARINE' },
+  pd:     { cost: 3, hp: 22, color: '#2a3a4a', edge: '#8ad4ff', name: 'PD' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
   turret: '#3d4f63', armor: '#6a7078', rocket: '#7a4a3a', cargo: '#a0762a',
   gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
+  marine: '#2a8a50', pd: '#5a7a9a',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -44,11 +47,12 @@ const ROSTER = [
   { name: 'HAULER',  desc: 'cargo, 1 gun', color: '#d4b06a', g: [[4,3,'engine'],[4,4,'cargo'],[4,5,'turret'],[3,4,'hull'],[5,4,'cargo']] },
   { name: 'COLLECTOR', desc: 'gyro + cargo', color: '#3ae8a8', g: [[4,3,'engine'],[4,4,'gyro'],[4,5,'turret'],[3,4,'cargo'],[5,4,'cargo']] },
   { name: 'BEAMER',  desc: 'melting laser', color: '#ff5c9a', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'laser'],[3,4,'hull'],[5,4,'hull']] },
+  { name: 'CORSAIR', desc: 'boarding + PD', color: '#5affa0', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'marine'],[3,4,'pd'],[5,4,'hull'],[4,6,'turret']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -534,9 +538,26 @@ function nearestAlly(f) {
 
 function autoFire(s, dt, forced) {
   for (const b of s.blocks) {
-    if (b.type !== 'turret' && b.type !== 'rocket' && b.type !== 'laser') continue;
+    if (b.type !== 'turret' && b.type !== 'rocket' && b.type !== 'laser' && b.type !== 'pd') continue;
     if (b.type === 'turret' && b.barrels <= 0) continue;
     b.cd -= dt;
+    // point defense: shoots down enemy shells and rockets on approach —
+    // it's the only answer to a missile swarm
+    if (b.type === 'pd') {
+      const p = bw(s, b);
+      let bb = null, bd = 230;
+      for (const bu of bullets) if (bu.team !== s.team) { const d2 = Math.hypot(bu.x - p.x, bu.y - p.y); if (d2 < bd) { bd = d2; bb = bu; } }
+      if (bb) {
+        b.aim = Math.atan2(bb.y - p.y, bb.x - p.x);
+        if (b.cd <= 0) {
+          b.cd = 0.5;
+          bb.ttl = 0;
+          explode(bb.x, bb.y, '#8ad4ff', 6);
+          particles.push({ x: p.x + Math.cos(b.aim) * 14, y: p.y + Math.sin(b.aim) * 14, vx: rand(-20, 20), vy: rand(-20, 20), ttl: 0.15, max: 0.15, color: '#8ad4ff', r: 4 });
+        }
+      }
+      continue;
+    }
     let t = null;
     if (forced && validTarget(forced)) t = targetPoint(forced);
     if (!t) t = s.team === 'ally' ? nearestFoe(s) : nearestAlly(s);
@@ -990,8 +1011,8 @@ function update(dt) {
     }
     if (foesDown >= beltGoal) won = true;
   }
-  // elite hunt: contract is done when the flagship's main hull dies
-  if (mission === 'hunt' && !won && elite && !elite.alive) won = true;
+  // elite hunt: contract is done when the flagship dies — or gets boarded
+  if (mission === 'hunt' && !won && elite && (!elite.alive || elite.team === 'ally')) won = true;
 
   // contract payout — banked once, straight into the profile
   if (won && !banked && mission !== 'station') {
@@ -1052,6 +1073,32 @@ function update(dt) {
     for (const b of s.blocks) if (b.heat > 0) b.heat = Math.max(0, b.heat - 140 * dt);
 
   if (msg) { msg.t -= dt; if (msg.t <= 0) msg = null; }
+
+  // boarding: a MARINE bay grapples any engine-dead foe in reach — 2.5s of
+  // cutting through the hatch and the prize is yours. The bay empties out:
+  // marines now live on the captured hull
+  for (const s of allies) {
+    if (!s.alive || !s.blocks.some(b => b.type === 'marine')) continue;
+    for (const f of foes) {
+      if (!f.alive || f.blocks.some(b => b.type === 'engine')) { f.boardT = 0; continue; }
+      if (dist(s, f) > s.radius + f.radius + 40) { f.boardT = 0; continue; }
+      f.boardT = (f.boardT || 0) + dt;
+      if (Math.random() < 0.3)
+        particles.push({ x: (s.x + f.x) / 2 + rand(-12, 12), y: (s.y + f.y) / 2 + rand(-12, 12), vx: rand(-20, 20), vy: rand(-20, 20), ttl: 0.3, max: 0.3, color: '#5affa0', r: 2.5 });
+      if (f.boardT > 2.5) {
+        const mb = s.blocks.find(b => b.type === 'marine');
+        s.blocks = s.blocks.filter(b => b !== mb);
+        const mp = bw(s, mb); explode(mp.x, mp.y, '#5affa0', 14);
+        recount(s); splitCheck(s);
+        f.team = 'ally'; f.role = null; f.boardT = 0;
+        f.order = { kind: 'follow', t: allies[0], slot: allies.length };
+        pendingWrecks.push(f);
+        foes = foes.filter(x => x !== f);
+        msg = { text: 'SHIP CAPTURED — MARINES ABOARD', t: 3 };
+        break;
+      }
+    }
+  }
 
   // severed sections join the battle as drifting wrecks
   if (pendingWrecks.length) {
@@ -1226,7 +1273,7 @@ function drawEditor() {
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
   ctx.fillText('PARTS', px, gs.y - 10);
   KEYS_ORDER.forEach((k, i) => {
-    const r = { x: px, y: gs.y + i * 50, w: pw, h: 44 };
+    const r = { x: px, y: gs.y + i * 44, w: pw, h: 40 };
     palette[k] = r;
     const T = TYPES[k], sel = selected === k;
     ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
@@ -1243,7 +1290,7 @@ function drawEditor() {
   });
 
   // wingmen roster — two columns
-  const ry0 = gs.y + KEYS_ORDER.length * 50 + 26;
+  const ry0 = gs.y + KEYS_ORDER.length * 44 + 22;
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
   ctx.fillText(`FLEET  (${rosterSel.size}/${MAX_WING})`, px, ry0 - 10);
   ROSTER.forEach((r, i) => {
