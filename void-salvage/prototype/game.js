@@ -345,6 +345,7 @@ function recount(s) {
   const gyro = s.blocks.filter(b => b.type === 'gyro').length;
   // armor plates ride heavier than normal blocks
   const mass = Math.max(1, s.blocks.reduce((m, b) => m + (b.type === 'armor' ? 1.5 : 1), 0));
+  s.mass = mass;
   s.thrust = eng * 220 / (mass * 0.5);
   s.turn = Math.max(1.0, 2.4 - mass * 0.08 + gyro * 0.4);
   s.cargo = s.blocks.some(b => b.type === 'cargo');
@@ -362,6 +363,9 @@ function recount(s) {
   const jam = s.blocks.filter(b => b.type === 'jam').length;
   s.jamR = jam ? 380 + jam * 70 : 0;
   s.tracN = s.blocks.filter(b => b.type === 'trac').length;
+  // atmosphere: 10 units of air per sealed compartment
+  s.airMax = s.blocks.length * 10;
+  if (s.air === undefined || s.air > s.airMax) s.air = s.airMax;
 }
 
 function makeShip(list, x, y, team, color, o = {}) {
@@ -1296,6 +1300,25 @@ function update(dt) {
   // shield bubble recharges
   for (const s of [...allies, ...foes])
     if (s.alive && s.shield < s.shieldMax) s.shield = Math.min(s.shieldMax, s.shield + s.shieldRegen * dt);
+
+  // breached compartments vent atmosphere — every hole is a tiny thruster
+  // that shoves the hull and spins it until the air runs out
+  for (const s of [...allies, ...foes]) {
+    if (!s.alive || s.air <= 0) continue;
+    for (const b of s.blocks) {
+      if (b.pixCount >= BP * BP * 0.6) continue; // only a real breach vents
+      s.air -= 6 * dt;
+      const p = bw(s, b);
+      const d = Math.hypot(s.x - p.x, s.y - p.y) || 1;
+      const dx = (s.x - p.x) / d, dy = (s.y - p.y) / d; // gas out → hull recoils away from the hole
+      const acc = 90 / s.mass;
+      s.vx += dx * acc * dt; s.vy += dy * acc * dt;
+      s.va += ((p.x - s.x) * dy - (p.y - s.y) * dx) * acc * 0.015 * dt;
+      if (Math.random() < dt * 8)
+        particles.push({ x: p.x, y: p.y, vx: -dx * rand(50, 110), vy: -dy * rand(50, 110), ttl: 0.6, max: 0.6, color: '#cfe8ff', r: 2 });
+      if (s === allies[0] && !s.vented) { s.vented = true; msg = { text: 'HULL BREACH — VENTING ATMOSPHERE', t: 3 }; }
+    }
+  }
 
   // repair drones weld dead pixels back — slow, most damaged block first
   for (const s of [...allies, ...foes]) {
