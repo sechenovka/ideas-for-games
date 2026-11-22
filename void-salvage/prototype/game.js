@@ -111,11 +111,12 @@ const CONTRACTS = {
   belt:    { name: 'BELT SWEEP', desc: 'clear 12 hostiles out of the rock field — dodging required', accent: '#8ad4ff' },
   hunt:    { name: 'ELITE HUNT', desc: 'a pirate flagship and its escorts — bring real guns', accent: '#ffcf6e' },
   convoy:  { name: 'ESCORT DUTY', desc: 'a fat hauler is crossing the belt — get it home in one piece', accent: '#9dff8a' },
+  tow:     { name: 'SALVAGE RUN', desc: 'three dead hulks in the field — drag them to the beacon', accent: '#4affe0' },
   defense: { name: 'BASE DEFENSE', desc: 'pirates inbound — hold the line', accent: '#ff8a7a', hidden: true },
 };
 let salvage = 0, debris = [], mines = [], msg = null, reinforced = false;
 let baseShip = null, defWave = 0, baseLost = false, raidWarn = false;
-let hauler = null, haulerLost = false;
+let hauler = null, haulerLost = false, towGot = 0;
 // build capacity is the limiter — the workbench field itself is unbounded
 const depotBonus = () => ((profile && profile.base) || []).reduce((n, b) => n + (b && b.t === 'depot' ? b.lvl * 3 : 0), 0);
 const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + depotBonus() + Math.floor(salvage);
@@ -394,7 +395,7 @@ function launch() {
   autopilot = false; paused = false; won = false; dead = false; time = 0;
   debris = []; mines = []; msg = null; reinforced = false;
   foesDown = 0; beltGoal = 0; elite = null; banked = false; mined = 0;
-  baseShip = null; defWave = 0; baseLost = false; hauler = null; haulerLost = false;
+  baseShip = null; defWave = 0; baseLost = false; hauler = null; haulerLost = false; towGot = 0;
   const flag = makeShip(design, -600, 0, 'ally', '#7fd4ff');
   allies = [flag];
   cam.x = flag.x; cam.y = flag.y; cam.zoom = 1;
@@ -505,6 +506,22 @@ function launch() {
       asteroids.push(makeAsteroid(ax, ay, rand(24, 60)));
     }
     spawnRoamer(); spawnRoamer();
+  } else if (mission === 'tow') { // dead hulks + a beacon — tractor them home
+    station = noStation; planet = null; pods = [];
+    const hulkDefs = [
+      { d: [[4,3,'hull'],[4,4,'armor'],[3,4,'cargo'],[5,4,'hull'],[4,5,'hull']], x: 600, y: -320 },
+      { d: [[4,3,'armor'],[4,4,'hull'],[3,4,'hull'],[5,4,'cargo'],[4,5,'armor'],[3,5,'hull']], x: 1350, y: 380 },
+      { d: [[4,3,'hull'],[4,4,'cargo'],[3,4,'armor'],[5,4,'armor'],[4,5,'hull'],[5,5,'hull'],[3,5,'cargo']], x: 950, y: 700 },
+    ];
+    foes = hulkDefs.map(h => {
+      const f = makeShip(gridFromList(h.d), h.x, h.y, 'foe', '#6a7a8a');
+      f.role = 'dummy'; f.hulk = true; // dead driftwood — not a target
+      return f;
+    });
+    waveT = 18; roamerT = 12;
+    for (let k = 0; k < 10; k++)
+      asteroids.push(makeAsteroid(rand(0, 1800), rand(-700, 800), rand(24, 55)));
+    spawnRoamer();
   } else { // 'test' — firing range: dummies, no engines, no guns, no pay
     station = noStation; planet = null;
     foes = [
@@ -647,7 +664,7 @@ function followPoint(s) {
 
 function nearestFoe(s) {
   let best = null, bd = 620;
-  for (const f of foes) if (f.alive) { const d = dist(s, f); if (d < bd) { bd = d; best = f; } }
+  for (const f of foes) if (f.alive && !f.hulk) { const d = dist(s, f); if (d < bd) { bd = d; best = f; } }
   for (const t of station.turrets) if (t.alive) { const d = dist(s, turretPos(t)); if (d < bd) { bd = d; best = turretPos(t); } }
   if (!best && station.turrets.every(t => !t.alive) && station.coreHp > 0 && dist(s, station) < 700) best = station;
   return best;
@@ -1245,6 +1262,30 @@ function update(dt) {
     }
   }
 
+  // salvage run: tractored hulks dissolve into scrap inside the beacon ring
+  if (mission === 'tow' && !won) {
+    for (const f of foes) {
+      if (!f.alive || !f.hulk) continue;
+      if (Math.hypot(f.x + 500, f.y - 200) < 160) {
+        f.alive = false; towGot++;
+        explode(f.x, f.y, '#4affe0', 30);
+        msg = { text: `HULK RECOVERED ${towGot}/3`, t: 3 };
+      }
+    }
+    if (towGot >= 3) won = true;
+    waveT -= dt;
+    const alive = foes.filter(f => f.alive && !f.hulk && !f.wreck).length;
+    if (waveT <= 0 && alive < 3) {
+      waveT = 22;
+      const a = rand(0, TAU);
+      const f = makeShip(gridFromList(BELT_DESIGNS[Math.floor(Math.random() * BELT_DESIGNS.length)]),
+        600 + Math.cos(a) * 900, Math.sin(a) * 900, 'foe', '#ff8a7a');
+      f.role = 'interceptor';
+      foes.push(f);
+      msg = { text: 'SCAVENGER PIRATE INBOUND', t: 2.5 };
+    }
+  }
+
   // test range: every dummy scrapped or husked (wrecks don't count)
   if (mission === 'test' && !won && foes.every(f => !f.alive || f.wreck)) won = true;
 
@@ -1279,11 +1320,12 @@ function update(dt) {
   }
 
   // contract payout — banked once, straight into the profile
-  if (won && !banked && (mission === 'belt' || mission === 'hunt' || mission === 'defense' || mission === 'convoy')) {
+  if (won && !banked && (mission === 'belt' || mission === 'hunt' || mission === 'defense' || mission === 'convoy' || mission === 'tow')) {
     banked = true;
     const reward = mission === 'belt' ? { scrap: 60, ore: 15 }
       : mission === 'defense' ? { scrap: 50, ore: 20 }
       : mission === 'convoy' ? { scrap: 80, ore: 10 }
+      : mission === 'tow' ? { scrap: 70, ore: 15 }
       : { scrap: 140, ore: 30 };
     profile.scrap = (profile.scrap || 0) + reward.scrap;
     profile.ore = (profile.ore || 0) + reward.ore + mined;
@@ -1993,6 +2035,17 @@ function draw() {
       ctx.beginPath(); ctx.arc(s.x, s.y, s.radius + 8 + rand(0, 8), a, a + rand(0.4, 1.1)); ctx.stroke();
     }
   }
+  // salvage beacon — pulsing teal ring where hulks get recycled
+  if (mission === 'tow') {
+    const pulse = 0.5 + 0.3 * Math.sin(time * 4);
+    ctx.strokeStyle = `rgba(74,255,224,${pulse})`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(-500, 200, 160, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = 'rgba(74,255,224,0.25)';
+    ctx.beginPath(); ctx.arc(-500, 200, 140, 0, TAU); ctx.stroke();
+    ctx.fillStyle = '#4affe0'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('SALVAGE BEACON', -500, 200 - 176);
+    ctx.textAlign = 'left';
+  }
   for (const s of allies) if (s.alive && !autopilot) drawOrderMarker(s);
 
   for (const b of bullets) {
@@ -2075,6 +2128,8 @@ function draw() {
   } else if (mission === 'convoy') {
     const left = hauler ? Math.max(0, Math.round((2450 - hauler.x) / 10)) : 0;
     ctx.fillText(`ESCORT  ${hauler && hauler.alive ? left + 'm TO DOCK' : 'HAULER LOST'}`, W - 16, 24);
+  } else if (mission === 'tow') {
+    ctx.fillText(`SALVAGE RUN  HULKS ${towGot}/3`, W - 16, 24);
   } else {
     ctx.fillText(`TEST RANGE  TARGETS LEFT ${foes.filter(f => f.alive && !f.wreck).length}`, W - 16, 24);
   }
