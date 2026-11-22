@@ -1775,6 +1775,9 @@ function draw() {
     const ng = flag.blocks.filter(b => b.type === 'turret').length;
     ctx.fillStyle = '#7fd4ff'; ctx.font = '14px monospace';
     ctx.fillText(`FLAGSHIP  hull:${nh}  eng:${ne}  guns:${ng}`, 16, 24);
+    // energy bar — weapons go quiet when the tank runs dry
+    ctx.fillStyle = '#222'; ctx.fillRect(16, 30, 160, 6);
+    ctx.fillStyle = '#6aff7a'; ctx.fillRect(16, 30, 160 * Math.max(0, (flag.energy || 0) / flag.emax), 6);
   }
   let hy = 44;
   for (let i = 1; i < allies.length; i++) {
