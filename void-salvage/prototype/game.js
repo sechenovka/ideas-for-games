@@ -1866,7 +1866,7 @@ function baseClick(mx, my) {
 
 function loginSteam() {
   profile = accounts.find(a => a.steam) ||
-    { name: 'STEAM-PILOT', lvl: 1, scrap: 0, ore: 0, fuel: 0, steam: true };
+    { name: 'STEAM-PILOT', lvl: 1, scrap: 80, ore: 40, fuel: 20, steam: true };
   loadProfileDesign();
   saveProfile();
   mode = 'base';
@@ -1896,7 +1896,7 @@ function drawMenu() {
   let y = H * 0.34;
   btn(y, 320, 52, T('m_steam'), '#7fd4ff', loginSteam); y += 68;
   btn(y, 320, 44, T('m_new'), '#9dff8a', () => {
-    profile = { name: 'CMDR-' + Math.floor(rand(1000, 9999)), lvl: 1, scrap: 0, ore: 0, fuel: 0 };
+    profile = { name: 'CMDR-' + Math.floor(rand(1000, 9999)), lvl: 1, scrap: 80, ore: 40, fuel: 20 };
     design = starterDesign();
     saveProfile();
     mode = 'base';
