@@ -295,6 +295,7 @@ function recount(s) {
   const mass = Math.max(1, s.blocks.reduce((m, b) => m + (b.type === 'armor' ? 1.5 : 1), 0));
   s.thrust = eng * 220 / (mass * 0.5);
   s.turn = Math.max(1.0, 2.4 - mass * 0.08 + gyro * 0.4);
+  s.cargo = s.blocks.some(b => b.type === 'cargo');
 }
 
 function makeShip(list, x, y, team, color, o = {}) {
@@ -1006,7 +1007,9 @@ function update(dt) {
   particles = particles.filter(p => p.ttl > 0);
 
   // debris is not loot — it is SHRAPNEL. It stays forever and eats hull,
-  // but bites small: only a real speed difference makes it dangerous
+  // but bites small: only a real speed difference makes it dangerous.
+  // Exception: a ship carrying CARGO blocks runs a collector arm — it picks
+  // up drifting chunks at close range and banks them as salvage.
   for (const d of debris) {
     d.x += d.vx * dt; d.y += d.vy * dt; d.a += d.va * dt; d.age += dt;
     d.vx *= (1 - 0.15 * dt); d.vy *= (1 - 0.15 * dt);
@@ -1014,6 +1017,13 @@ function update(dt) {
       if (!s.alive) continue;
       if (d.src === s && d.age < 0.8) continue; // just-birthed chunk ignores its parent
       const relV = Math.hypot(s.vx - d.vx, s.vy - d.vy);
+      // collector arm: cargo haulers vacuum debris — slowly, one chunk at a time
+      if (s.team === 'ally' && s.cargo && relV < 60 && dist(s, d) < s.radius * 0.9) {
+        d.dead = true;
+        salvage += 0.2;
+        particles.push({ x: d.x, y: d.y, vx: (s.x - d.x) * 3, vy: (s.y - d.y) * 3, ttl: 0.3, max: 0.3, color: '#9dff8a', r: 3 });
+        continue;
+      }
       if (dist(s, d) < s.radius * 0.8 && relV > 80) {
         let blk = null, bd = 1e9;
         for (const bl of s.blocks) { const p = bw(s, bl), dd = Math.hypot(d.x - p.x, d.y - p.y); if (dd < bd) { bd = dd; blk = bl; } }
@@ -1027,6 +1037,7 @@ function update(dt) {
       }
     }
   }
+  debris = debris.filter(d => !d.dead);
   if (debris.length > 420) debris.splice(0, debris.length - 420); // perf cap
 
   // dead in the water: a ship with no engines left bleeds off speed and stalls
