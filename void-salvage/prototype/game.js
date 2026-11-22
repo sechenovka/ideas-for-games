@@ -166,7 +166,7 @@ const TIL = 30, PW = 52, PH = 34;     // tile size, map dims
 // tile types: 0 air, 1 dirt, 2 rock, 3 ore, 4 fuel, 5 wall, 6 base-wall
 const TILE_HP = { 1: 25, 2: 55, 3: 35, 4: 35, 5: 80, 6: 110 };
 const TILE_COL = { 1: '#5e4630', 2: '#4a4f5a', 3: '#b06a2a', 4: '#2a8a6a', 5: '#6e92c8', 6: '#8a4a5e' };
-let ptiles, rover, pguards, pturrets, pcore, pres, pdig, pBuildSel, pdebris, pwon, pdead, pbuilt, ptileDmg;
+let ptiles, rover, pguards, pturrets, pcore, pres, pdig, pBuildSel, pdebris, pwon, pdead, pbuilt, ptileDmg, pvehs, pdrones;
 const autoBtn  = { x: 0, y: 0, w: 150, h: 38 };
 const pauseBtn = { x: 0, y: 0, w: 120, h: 38 };
 const allBtn   = { x: 0, y: 0, w: 140, h: 38 };
@@ -2307,6 +2307,13 @@ function initPlanet() {
   ];
   pcore = { tx: bx + 12, ty: by + 4, hp: 150, maxHp: 150, alive: true };
   pguards = [mkGuard(bx + 5, by + 5), mkGuard(bx + 11, by + 6), mkGuard(bx + 2, by + 2)];
+  // armored patrols roll the surface — the base isn't guarded by infantry alone
+  pvehs = [
+    { x: (bx - 6) * TIL, y: 0, dir: -1, hp: 70, maxHp: 70, cd: rand(0, 1), alive: true },
+    { x: (bx - 14) * TIL, y: 0, dir: -1, hp: 70, maxHp: 70, cd: rand(0, 1), alive: true },
+    { x: PW * TIL * 0.5, y: 0, dir: -1, hp: 60, maxHp: 60, cd: rand(0, 1), alive: true },
+  ];
+  pdrones = [];
   pbuilt = [];
   rover = { x: 3 * TIL, y: (surf - 0.5) * TIL, vx: 0, vy: 0, angle: 0, hp: 140, maxHp: 140, cd: 0, order: null, target: null, alive: true };
   bullets = []; particles = []; pdebris = [];
@@ -2321,7 +2328,14 @@ function mkGuard(tx, ty) {
 const PB = [
   { key: 'wall', cost: 4, name: 'WALL' },
   { key: 'turret', cost: 12, name: 'TURRET' },
+  { key: 'drone', cost: 20, name: 'DRONE' },
 ];
+// surface level under a column — vehicles ride the terrain, not the sky
+function groundYAt(x) {
+  const c = Math.max(0, Math.min(PW - 1, Math.floor(x / TIL)));
+  for (let r = 0; r < PH; r++) if (ptiles[r][c] !== 0) return r * TIL;
+  return PH * TIL;
+}
 const pbtnRects = [];
 
 function planetClick(mx, my) {
@@ -2337,6 +2351,13 @@ function planetClick(mx, my) {
   // build placement
   if (pBuildSel) {
     const spec = PB.find(b => b.key === pBuildSel);
+    if (spec.key === 'drone') {
+      if (inRng < 8 && pres.ore >= spec.cost) {
+        pres.ore -= spec.cost;
+        pdrones.push({ x: rover.x + rand(-40, 40), y: rover.y - 60, angle: 0, hp: 50, maxHp: 50, cd: 0, alive: true });
+      }
+      return;
+    }
     if (tileAt(c, r) === 0 && inRng < 8 && pres.ore >= spec.cost) {
       pres.ore -= spec.cost;
       if (spec.key === 'wall') ptiles[r][c] = 5;
@@ -2347,6 +2368,7 @@ function planetClick(mx, my) {
   // target enemies
   for (const t of pturrets) if (t.alive && dist(p, tpos(t)) < 24) { rover.target = t; return; }
   for (const g of pguards) if (g.alive && dist(p, g) < 22) { rover.target = g; return; }
+  for (const v of pvehs) if (v.alive && dist(p, v) < 24) { rover.target = v; return; }
   if (pcore.alive && dist(p, tpos(pcore)) < 30) { rover.target = pcore; return; }
   // dig
   if (tileAt(c, r) !== 0 && inRng < 4) { pdig = { c, r, t: TILE_HP[tileAt(c, r)] / 45, max: TILE_HP[tileAt(c, r)] / 45 }; rover.target = null; return; }
@@ -2427,12 +2449,62 @@ function pUpdate(dt) {
     }
   }
 
+  // patrol vehicles roll the ground — they chase the lander when it's close
+  for (const v of pvehs) {
+    if (!v.alive) continue;
+    const d = dist(v, rover);
+    v.cd -= dt;
+    if (d < 380) {
+      // engage: close to ~240px then stand and shoot
+      if (d > 240) v.x += Math.sign(rover.x - v.x) * 85 * dt;
+      const a = angleTo(v, rover);
+      v.angle = a;
+      if (v.cd <= 0) {
+        v.cd = 1.1;
+        bullets.push({ x: v.x, y: v.y - 6, vx: Math.cos(a) * 320, vy: Math.sin(a) * 320, ttl: 1.6, dmg: 9, team: 'foe' });
+      }
+    } else {
+      // patrol: cruise the surface, turn at holes and walls
+      const ahead = v.x + v.dir * 30;
+      const gyHere = groundYAt(v.x), gyAhead = groundYAt(ahead);
+      if (Math.abs(gyAhead - gyHere) > TIL * 1.2 || ahead < TIL || ahead > PW * TIL - TIL) v.dir *= -1;
+      else v.x += v.dir * 45 * dt;
+      v.angle = v.dir > 0 ? 0 : Math.PI;
+    }
+    v.y = groundYAt(v.x) - 9;
+  }
+
+  // allied drones shadow the lander and shoot whatever's closest
+  for (const g of pdrones) {
+    if (!g.alive) continue;
+    const anchor = { x: rover.x - Math.cos(rover.angle) * 60, y: rover.y - 50 };
+    const dd = dist(g, anchor);
+    if (dd > 26) {
+      const a = angleTo(g, anchor);
+      const nx = g.x + Math.cos(a) * Math.min(220, dd * 4) * dt, ny = g.y + Math.sin(a) * Math.min(220, dd * 4) * dt;
+      if (!solidPx(nx, g.y)) g.x = nx;
+      if (!solidPx(g.x, ny)) g.y = ny;
+    }
+    g.cd -= dt;
+    let best = null, bd = 340;
+    for (const e of pguards) if (e.alive && dist(g, e) < bd) { bd = dist(g, e); best = e; }
+    for (const e of pvehs) if (e.alive && dist(g, e) < bd) { bd = dist(g, e); best = e; }
+    for (const e of pturrets) if (e.alive && dist(g, tpos(e)) < bd) { bd = dist(g, tpos(e)); best = tpos(e); }
+    if (best && g.cd <= 0) {
+      g.cd = 0.8;
+      const a = angleTo(g, best);
+      g.angle = a;
+      bullets.push({ x: g.x, y: g.y, vx: Math.cos(a) * 360, vy: Math.sin(a) * 360, ttl: 1.2, dmg: 7, team: 'ally' });
+    }
+  }
+
   // player-built turrets defend you
   for (const t of pbuilt) {
     if (!t.alive) continue; t.cd -= dt;
     const p = { x: t.c * TIL + TIL / 2, y: t.r * TIL + TIL / 2 };
     let best = null, bd = 380;
     for (const g of pguards) if (g.alive && dist(p, g) < bd) { bd = dist(p, g); best = g; }
+    for (const e of pvehs) if (e.alive && dist(p, e) < bd) { bd = dist(p, e); best = e; }
     for (const e of pturrets) if (e.alive && dist(p, tpos(e)) < bd) { bd = dist(p, tpos(e)); best = tpos(e); }
     if (best && t.cd <= 0) {
       t.cd = 0.7;
@@ -2465,6 +2537,10 @@ function pUpdate(dt) {
         const p = { x: t.c * TIL + TIL / 2, y: t.r * TIL + TIL / 2 };
         if (dist(b, p) < 14) { t.hp -= b.dmg; b.ttl = 0; if (t.hp <= 0) { t.alive = false; explode(p.x, p.y, '#7fd4ff', 18); } }
       }
+      for (const g of pdrones) {
+        if (!g.alive) continue;
+        if (dist(b, g) < 12) { g.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#7fd4ff', 5); if (g.hp <= 0) { g.alive = false; explode(g.x, g.y, '#7fd4ff', 20); } }
+      }
     } else {
       for (const t of pturrets) if (t.alive && dist(b, tpos(t)) < 15) {
         t.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ffd27f', 5);
@@ -2473,6 +2549,10 @@ function pUpdate(dt) {
       for (const g of pguards) if (g.alive && dist(b, g) < 13) {
         g.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ffd27f', 5);
         if (g.hp <= 0) { g.alive = false; explode(g.x, g.y, '#ff8a7a', 24); }
+      }
+      for (const v of pvehs) if (v.alive && dist(b, v) < 16) {
+        v.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#ffb36e', 6);
+        if (v.hp <= 0) { v.alive = false; explode(v.x, v.y, '#ffb36e', 30); }
       }
       if (pcore.alive && dist(b, tpos(pcore)) < 20) {
         pcore.hp -= b.dmg; b.ttl = 0; explode(b.x, b.y, '#c8a2ff', 6);
@@ -2567,6 +2647,37 @@ function pDraw() {
     ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-8, -9); ctx.lineTo(-8, 9); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#ff8a7a'; ctx.fillRect(6, -2, 8, 4);
     ctx.restore();
+  }
+
+  // patrol vehicles — little armored cars riding the surface
+  for (const v of pvehs) {
+    if (!v.alive) continue;
+    ctx.save(); ctx.translate(v.x, v.y);
+    ctx.fillStyle = '#3a2a1a'; ctx.strokeStyle = '#ffb36e'; ctx.lineWidth = 1.5;
+    ctx.fillRect(-16, -10, 32, 12); ctx.strokeRect(-16, -10, 32, 12);
+    ctx.fillStyle = '#1a120a'; ctx.fillRect(-16, 2, 32, 5); // treads
+    ctx.save(); ctx.rotate(v.angle || 0);
+    ctx.fillStyle = '#ffb36e'; ctx.fillRect(4, -4, 16, 5); // gun barrel
+    ctx.restore();
+    ctx.fillStyle = '#222'; ctx.fillRect(-16, -18, 32, 3);
+    ctx.fillStyle = '#ffb36e'; ctx.fillRect(-16, -18, 32 * v.hp / v.maxHp, 3);
+    ctx.restore();
+  }
+
+  // allied drones — hovering quads that shadow the lander
+  for (const g of pdrones) {
+    if (!g.alive) continue;
+    ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(g.angle || 0);
+    ctx.fillStyle = '#12303a'; ctx.strokeStyle = '#7fd4ff'; ctx.lineWidth = 1.5;
+    ctx.fillRect(-8, -8, 16, 16); ctx.strokeRect(-8, -8, 16, 16);
+    ctx.fillStyle = '#7fd4ff'; ctx.fillRect(4, -2, 10, 4);
+    ctx.restore();
+    for (const [ox, oy] of [[-11, -11], [11, -11], [-11, 11], [11, 11]]) {
+      ctx.strokeStyle = 'rgba(127,212,255,0.6)';
+      ctx.beginPath(); ctx.arc(g.x + ox, g.y + oy, 3, 0, TAU); ctx.stroke();
+    }
+    ctx.fillStyle = '#222'; ctx.fillRect(g.x - 10, g.y - 18, 20, 3);
+    ctx.fillStyle = '#7fd4ff'; ctx.fillRect(g.x - 10, g.y - 18, 20 * g.hp / g.maxHp, 3);
   }
 
   // player-built turrets
