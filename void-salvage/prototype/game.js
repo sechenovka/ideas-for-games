@@ -33,10 +33,11 @@ const TYPES = {
   torp:   { cost: 6, hp: 24, color: '#3a2a30', edge: '#ff8a5c', name: 'TORP' },
   jam:    { cost: 4, hp: 20, color: '#241a3a', edge: '#b06aff', name: 'JAM' },
   trac:   { cost: 4, hp: 22, color: '#0f2a2a', edge: '#4affe0', name: 'TRAC' },
+  rctr:   { cost: 6, hp: 18, color: '#3a2a10', edge: '#ffd27f', name: 'REACTOR' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
@@ -44,7 +45,7 @@ const DEBRIS_COL = {
   gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
   marine: '#2a8a50', pd: '#5a7a9a', repair: '#2a9a70', mines: '#8a3a3a',
   battery: '#3a9a4a', shield: '#4a7ab8', torp: '#a85a3a',
-  jam: '#7a4ab8', trac: '#2aa08a',
+  jam: '#7a4ab8', trac: '#2aa08a', rctr: '#c89a3a',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -61,11 +62,12 @@ const ROSTER = [
   { name: 'VOLT',    desc: 'laser + cells', color: '#6aff7a', g: [[4,3,'engine'],[4,4,'battery'],[4,5,'laser'],[3,4,'battery'],[5,4,'hull']] },
   { name: 'AEGIS',   desc: 'shield + torp', color: '#5ad4ff', g: [[4,3,'engine'],[4,4,'shield'],[4,5,'torp'],[3,4,'hull'],[5,4,'battery']] },
   { name: 'SPECTER', desc: 'jam + trac',    color: '#b06aff', g: [[4,3,'engine'],[4,4,'jam'],[4,5,'trac'],[3,4,'battery'],[5,4,'turret']] },
+  { name: 'NOVA',    desc: 'reactor+laser', color: '#ffd27f', g: [[4,3,'engine'],[4,4,'rctr'],[4,5,'laser'],[3,4,'rctr'],[5,4,'battery']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'jam', 'trac', 'rctr']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -100,6 +102,13 @@ function saveProfile() {
   const i = accounts.findIndex(a => a.name === profile.name);
   if (i >= 0) accounts[i] = profile; else accounts.push(profile);
   saveAccounts();
+}
+// ship designs live in the profile — autosave on launch/leave, three
+// named blueprint slots in the shipyard for keeping alternate builds
+const deepCopy = o => JSON.parse(JSON.stringify(o));
+function persistDesign() { if (profile) { profile.design = deepCopy(design); saveProfile(); } }
+function loadProfileDesign() {
+  design = (profile.design && profile.design.length) ? deepCopy(profile.design) : starterDesign();
 }
 let allies = [], foes, station, bullets, particles, stars, planet;
 const selection = new Set(); // ally ships under command
@@ -165,12 +174,13 @@ const launchBtn = { x: 0, y: 0, w: 170, h: 46 };
 const testBtn = { x: 0, y: 0, w: 170, h: 46 };
 const palette = {};   // part key -> rect
 const rosterRects = []; // i -> rect
+const bpRects = [];     // blueprint slots: {r, sr, i} — load zone + save chip
 
 const flagship = () => allies[0];
 
 // ---------- input ----------
 addEventListener('keydown', e => {
-  if (mode === 'editor' && e.code === 'Escape') { mode = 'base'; return; }
+  if (mode === 'editor' && e.code === 'Escape') { persistDesign(); mode = 'base'; return; }
   if (mode === 'base' && e.code === 'Escape') { mode = 'menu'; return; }
   if (mode === 'planet') {
     if (e.code === 'KeyR') mode = 'editor';
@@ -299,6 +309,19 @@ function editorClick(mx, my) {
   }
   if (inRect(launchBtn, mx, my)) { if (canLaunch().ok) launch(); return; }
   if (inRect(testBtn, mx, my)) { if (canLaunch().ok) { mission = 'test'; launch(); } return; }
+  // blueprint slots: [S] saves the current build in, body loads it back
+  for (const bp of bpRects) {
+    if (inRect(bp.sr, mx, my)) {
+      profile.bps = profile.bps || [null, null, null];
+      profile.bps[bp.i] = deepCopy(design);
+      saveProfile();
+      return;
+    }
+    if (inRect(bp.r, mx, my) && profile.bps && profile.bps[bp.i]) {
+      design = deepCopy(profile.bps[bp.i]);
+      return;
+    }
+  }
   const v = view(), ctr = designCenter();
   const px = (mx - v.x) / v.k + ctr.dx, py = (my - v.y) / v.k + ctr.dy;
   // click a part -> rip it off
@@ -354,8 +377,9 @@ function recount(s) {
   s.cargo = s.blocks.some(b => b.type === 'cargo');
   // energy budget: bare hull runs a trickle, each CELL adds a real tank
   const bat = s.blocks.filter(b => b.type === 'battery').length;
-  s.emax = 30 + bat * 60;
-  s.eregen = 3 + bat * 4;
+  const rct = s.blocks.filter(b => b.type === 'rctr').length;
+  s.emax = 30 + bat * 60 + rct * 40;
+  s.eregen = 3 + bat * 4 + rct * 10; // a reactor drinks for the whole grid
   if (s.energy === undefined || s.energy > s.emax) s.energy = s.emax;
   // shield pool: each emitter adds soak + regen
   const shd = s.blocks.filter(b => b.type === 'shield').length;
@@ -390,6 +414,7 @@ function bw(s, b) {
 
 // ---------- flight setup ----------
 function launch() {
+  persistDesign();
   saveProfile();
   mode = 'flight';
   autopilot = false; paused = false; won = false; dead = false; time = 0;
@@ -949,6 +974,7 @@ function checkBlockDead(s, blk) {
   const outA = Math.atan2(bpos.y - s.y, bpos.x - s.x);
   for (let k = 0; k < 3; k++) spawnChunk(bpos.x + rand(-8, 8), bpos.y + rand(-8, 8), dcol, 2 + Math.floor(rand(0, 3)), outA + rand(-0.4, 0.4), s);
   if (blk.type === 'ammo') ammoBlast(s, bpos); // magazine goes up — chain cooking is real
+  if (blk.type === 'rctr') ammoBlast(s, bpos, 3.4, 9); // reactor breach is worse
   splitCheck(s);
   recount(s);
   if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); if (s.team === 'foe' && !s.wreck) foesDown++; }
@@ -980,14 +1006,14 @@ function mineBlast(m) {
 
 // a breached magazine cooks off — pixels chewed out of everything close,
 // including your own hull. Keep ammo behind armor or don't mount it
-function ammoBlast(s, pos) {
+function ammoBlast(s, pos, rr = 2.2, want = 4) {
   explode(pos.x, pos.y, '#ffd27f', 44);
   for (const sh of [...allies, ...foes]) {
     if (!sh.alive) continue;
     for (const bl of sh.blocks.slice()) {
       const bp = bw(sh, bl);
-      if (Math.hypot(bp.x - pos.x, bp.y - pos.y) < CS * 2.2)
-        erodeBlock(sh, bl, bp.x + rand(-6, 6), bp.y + rand(-6, 6), 4);
+      if (Math.hypot(bp.x - pos.x, bp.y - pos.y) < CS * rr)
+        erodeBlock(sh, bl, bp.x + rand(-6, 6), bp.y + rand(-6, 6), want);
     }
   }
 }
@@ -1492,6 +1518,7 @@ function baseClick(mx, my) {
 function loginSteam() {
   profile = accounts.find(a => a.steam) ||
     { name: 'STEAM-PILOT', lvl: 1, scrap: 0, ore: 0, fuel: 0, steam: true };
+  loadProfileDesign();
   saveProfile();
   mode = 'base';
 }
@@ -1521,6 +1548,7 @@ function drawMenu() {
   btn(y, 320, 52, 'LOGIN VIA STEAM', '#7fd4ff', loginSteam); y += 68;
   btn(y, 320, 44, 'NEW PILOT', '#9dff8a', () => {
     profile = { name: 'CMDR-' + Math.floor(rand(1000, 9999)), lvl: 1, scrap: 0, ore: 0, fuel: 0 };
+    design = starterDesign();
     saveProfile();
     mode = 'base';
   });
@@ -1533,7 +1561,7 @@ function drawMenu() {
     ctx.fillText('SAVED PILOTS', cx, y); y += 14;
     for (const a of saved.slice(0, 4)) {
       y += 10;
-      btn(y, 320, 40, `${a.name}   ·   BASE LV ${a.lvl}`, '#8aa0c8', () => { profile = a; mode = 'base'; });
+      btn(y, 320, 40, `${a.name}   ·   BASE LV ${a.lvl}`, '#8aa0c8', () => { profile = a; loadProfileDesign(); mode = 'base'; });
       y += 50;
     }
   }
@@ -1806,6 +1834,26 @@ function drawEditor() {
   ctx.strokeRect(testBtn.x, testBtn.y, testBtn.w, testBtn.h);
   ctx.fillStyle = chk.ok ? '#8ad4ff' : '#5a6a8a';
   ctx.fillText('TEST RANGE', testBtn.x + testBtn.w / 2, testBtn.y + 29);
+
+  // blueprint slots — keep alternate builds in the profile
+  profile.bps = profile.bps || [null, null, null];
+  bpRects.length = 0;
+  const bw2 = 116, by = launchBtn.y + launchBtn.h + 10;
+  for (let i = 0; i < 3; i++) {
+    const r = { x: px + i * (bw2 + 8), y: by, w: bw2 - 26, h: 32 };
+    const sr = { x: r.x + r.w, y: by, w: 26, h: 32 };
+    bpRects.push({ r, sr, i });
+    const full = profile.bps[i];
+    ctx.fillStyle = full ? '#141c2e' : '#0b1220';
+    ctx.strokeStyle = full ? '#8ad4ff' : '#3a4a6a'; ctx.lineWidth = 1.5;
+    ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = full ? '#8ad4ff' : '#4a5a7a';
+    ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(full ? `BP${i + 1} · ${full.length}p` : `BP${i + 1} empty`, r.x + r.w / 2, r.y + 20);
+    ctx.fillStyle = '#1d3a24'; ctx.fillRect(sr.x, sr.y, sr.w, sr.h);
+    ctx.strokeStyle = '#9dff8a'; ctx.strokeRect(sr.x, sr.y, sr.w, sr.h);
+    ctx.fillStyle = '#9dff8a'; ctx.fillText('S', sr.x + 13, sr.y + 21);
+  }
   ctx.textAlign = 'left';
 }
 
