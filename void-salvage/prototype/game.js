@@ -29,17 +29,19 @@ const TYPES = {
   repair: { cost: 4, hp: 24, color: '#1e3a34', edge: '#5affc0', name: 'REPAIR' },
   mines:  { cost: 3, hp: 20, color: '#3a1e24', edge: '#ff6a4a', name: 'MINES' },
   battery:{ cost: 2, hp: 22, color: '#1e3a22', edge: '#6aff7a', name: 'CELL' },
+  shield: { cost: 5, hp: 26, color: '#1e2a4a', edge: '#5ad4ff', name: 'SHIELD' },
+  torp:   { cost: 6, hp: 24, color: '#3a2a30', edge: '#ff8a5c', name: 'TORP' },
   cargo:  { cost: 1, hp: 30, color: '#6e5326', edge: '#ffcf6e', name: 'CARGO' },
   gyro:   { cost: 1, hp: 22, color: '#1e4a3a', edge: '#3ae8a8', name: 'GYRO' },
 };
-const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'cargo', 'gyro'];
+const KEYS_ORDER = ['hull', 'armor', 'engine', 'turret', 'rocket', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp', 'cargo', 'gyro'];
 const BP = 10; // per-block pixel grid — blocks die pixel by pixel
 const DEBRIS_COL = {
   hull: '#5a6f8f', hull_b: '#6f7351', hull_c: '#565b66', engine: '#8a5a30',
   turret: '#3d4f63', armor: '#6a7078', rocket: '#7a4a3a', cargo: '#a0762a',
   gyro: '#2a8a6a', laser: '#6a3a6e', ammo: '#a8842a',
   marine: '#2a8a50', pd: '#5a7a9a', repair: '#2a9a70', mines: '#8a3a3a',
-  battery: '#3a9a4a',
+  battery: '#3a9a4a', shield: '#4a7ab8', torp: '#a85a3a',
 };
 // escort roster — pick up to MAX_WING
 const ROSTER = [
@@ -54,11 +56,12 @@ const ROSTER = [
   { name: 'CORSAIR', desc: 'boarding + PD', color: '#5affa0', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'marine'],[3,4,'pd'],[5,4,'hull'],[4,6,'turret']] },
   { name: 'SAPPER',  desc: 'mines + repair', color: '#ff9d5c', g: [[4,3,'engine'],[4,4,'hull'],[4,5,'mines'],[3,4,'repair'],[5,4,'hull'],[4,6,'turret']] },
   { name: 'VOLT',    desc: 'laser + cells', color: '#6aff7a', g: [[4,3,'engine'],[4,4,'battery'],[4,5,'laser'],[3,4,'battery'],[5,4,'hull']] },
+  { name: 'AEGIS',   desc: 'shield + torp', color: '#5ad4ff', g: [[4,3,'engine'],[4,4,'shield'],[4,5,'torp'],[3,4,'hull'],[5,4,'battery']] },
 ];
 
 // ---------- sprites (rendered via Blender MCP) ----------
 const SPRITES = {};
-for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery']) {
+for (const k of ['hull', 'hull_b', 'hull_c', 'engine', 'gun_base', 'gun_barrel', 'st_base', 'st_barrel', 'asteroid_a', 'asteroid_b', 'asteroid_c', 'station_core', 'pb_core', 'armor', 'rocket', 'cargo', 'gyro', 'laser', 'ammo', 'marine', 'pd', 'repair', 'mines', 'battery', 'shield', 'torp']) {
   const img = new Image();
   img.src = 'assets/' + k + '.png';
   SPRITES[k] = img;
@@ -307,7 +310,7 @@ function canLaunch() {
   if (!design.length) return { ok: false, why: 'empty hull' };
   if (!n('hull')) return { ok: false, why: 'need HULL' };
   if (!n('engine')) return { ok: false, why: 'need ENGINE' };
-  if (!n('turret') && !n('rocket') && !n('laser')) return { ok: false, why: 'need a WEAPON' };
+  if (!n('turret') && !n('rocket') && !n('laser') && !n('torp')) return { ok: false, why: 'need a WEAPON' };
   // hull must be one welded piece — no floating sections
   const seen = new Set([design[0]]), q = [design[0]];
   for (let i = 0; i < q.length; i++)
@@ -344,6 +347,11 @@ function recount(s) {
   s.emax = 30 + bat * 60;
   s.eregen = 3 + bat * 4;
   if (s.energy === undefined || s.energy > s.emax) s.energy = s.emax;
+  // shield pool: each emitter adds soak + regen
+  const shd = s.blocks.filter(b => b.type === 'shield').length;
+  s.shieldMax = shd * 80;
+  s.shieldRegen = shd * 8;
+  if (s.shield === undefined || s.shield > s.shieldMax) s.shield = s.shieldMax;
 }
 
 function makeShip(list, x, y, team, color, o = {}) {
@@ -594,7 +602,7 @@ function nearestAlly(f) {
 
 function autoFire(s, dt, forced) {
   for (const b of s.blocks) {
-    if (b.type !== 'turret' && b.type !== 'rocket' && b.type !== 'laser' && b.type !== 'pd') continue;
+    if (b.type !== 'turret' && b.type !== 'rocket' && b.type !== 'laser' && b.type !== 'torp' && b.type !== 'pd') continue;
     if (b.type === 'turret' && b.barrels <= 0) continue;
     b.cd -= dt;
     // point defense: shoots down enemy shells and rockets on approach —
@@ -657,6 +665,15 @@ function autoFire(s, dt, forced) {
         if (station.coreHp <= 0 && station.turrets.every(x => !x.alive)) { won = true; explode(station.x, station.y, '#ffffff', 90); }
       }
       if (Math.random() < 0.5) particles.push({ x: ex, y: ey, vx: rand(-60, 60), vy: rand(-60, 60), ttl: 0.3, max: 0.3, color: '#ff5c9a', r: 3 });
+      continue;
+    }
+    // torpedo: slow heavy slug that punches deep — 6s reload, eats 10 energy
+    if (b.type === 'torp') {
+      if (dist(p, t) > 850 || s.energy < 10) continue;
+      s.energy -= 10;
+      b.cd = 6;
+      bullets.push({ x: p.x, y: p.y, vx: s.vx + Math.cos(b.aim) * 190, vy: s.vy + Math.sin(b.aim) * 190, ttl: 5.5, dmg: 0, team: s.team, splash: 0, torp: true });
+      particles.push({ x: p.x + Math.cos(b.aim) * 16, y: p.y + Math.sin(b.aim) * 16, vx: rand(-15, 15), vy: rand(-15, 15), ttl: 0.3, max: 0.3, color: '#ff8a5c', r: 5 });
       continue;
     }
     if (b.cd > 0) continue;
@@ -748,6 +765,18 @@ function hitShip(s, b) {
   if (!blk) return;
   b.ttl = 0;
 
+  // torpedo hits like a shaped charge: deep hole in the struck block,
+  // shock damage splashing the neighbors
+  if (b.torp) {
+    explode(b.x, b.y, '#ffd27f', 34);
+    for (const bl of s.blocks.slice()) {
+      const bp2 = bw(s, bl);
+      if (Math.hypot(bp2.x - bpos.x, bp2.y - bpos.y) < CS * 2.2)
+        erodeBlock(s, bl, b.x + rand(-6, 6), b.y + rand(-6, 6), bl === blk ? 20 : 8, 2.6);
+    }
+    return;
+  }
+
   erodeBlock(s, blk, b.x, b.y, 5 + Math.floor(rand(0, 5)) + (b.splash || 0) * 7, 1.6 + (b.splash || 0));
 
   // smart turret damage: chance to shoot the barrel/tower clean off
@@ -763,6 +792,13 @@ function hitShip(s, b) {
 
 // chew pixels out of a block around a world-space point
 function erodeBlock(s, blk, wx0, wy0, want, rr = 1.6) {
+  // shield soaks the hit first — 4 charge per pixel of bite
+  if (s.shield > 0) {
+    const soak = Math.min(s.shield, want * 4);
+    s.shield -= soak; want -= Math.floor(soak / 4);
+    explode(wx0, wy0, '#5ad4ff', 3);
+    if (want <= 0) return;
+  }
   const bpos = bw(s, blk);
   const c = Math.cos(s.angle), sn = Math.sin(s.angle);
   const lx = (wx0 - bpos.x) * c + (wy0 - bpos.y) * sn;
@@ -791,6 +827,11 @@ function erodeBlock(s, blk, wx0, wy0, want, rr = 1.6) {
 
 // laser melts instead of chipping: pixels slump off as slow glowing drops
 function meltPixels(s, blk, wx0, wy0, want) {
+  if (s.shield > 0) {
+    const soak = Math.min(s.shield, want * 4);
+    s.shield -= soak; want -= Math.floor(soak / 4);
+    if (want <= 0) return;
+  }
   const bpos = bw(s, blk);
   const c = Math.cos(s.angle), sn = Math.sin(s.angle);
   const lx = (wx0 - bpos.x) * c + (wy0 - bpos.y) * sn;
@@ -1159,6 +1200,10 @@ function update(dt) {
   for (const s of [...allies, ...foes])
     if (s.alive && s.energy < s.emax) s.energy = Math.min(s.emax, s.energy + s.eregen * dt);
 
+  // shield bubble recharges
+  for (const s of [...allies, ...foes])
+    if (s.alive && s.shield < s.shieldMax) s.shield = Math.min(s.shieldMax, s.shield + s.shieldRegen * dt);
+
   // repair drones weld dead pixels back — slow, most damaged block first
   for (const s of [...allies, ...foes]) {
     if (!s.alive) continue;
@@ -1472,7 +1517,8 @@ function drawEditor() {
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
   ctx.fillText('PARTS', px, gs.y - 10);
   KEYS_ORDER.forEach((k, i) => {
-    const r = { x: px, y: gs.y + i * 44, w: pw, h: 40 };
+    const col = i % 2, row = Math.floor(i / 2);
+    const r = { x: px + col * (pw + 8), y: gs.y + row * 44, w: pw, h: 40 };
     palette[k] = r;
     const T = TYPES[k], sel = selected === k;
     ctx.fillStyle = sel ? '#141c2e' : '#0b1220';
@@ -1489,7 +1535,7 @@ function drawEditor() {
   });
 
   // wingmen roster — two columns
-  const ry0 = gs.y + KEYS_ORDER.length * 44 + 22;
+  const ry0 = gs.y + Math.ceil(KEYS_ORDER.length / 2) * 44 + 22;
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
   ctx.fillText(`FLEET  (${rosterSel.size}/${MAX_WING})`, px, ry0 - 10);
   ROSTER.forEach((r, i) => {
@@ -1549,6 +1595,12 @@ function drawShip(s) {
     ctx.setLineDash([6, 5]);
     ctx.beginPath(); ctx.arc(s.x, s.y, s.radius + 6, 0, TAU); ctx.stroke();
     ctx.setLineDash([]);
+  }
+  // live shield bubble — faint cyan skin while the pool holds
+  if (s.shield > 1) {
+    ctx.strokeStyle = `rgba(90,212,255,${0.14 + 0.06 * Math.sin(time * 3)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.radius + 12, 0, TAU); ctx.stroke();
   }
   for (const b of s.blocks) {
     const p = bw(s, b), T = TYPES[b.type];
@@ -1740,6 +1792,18 @@ function draw() {
   for (const s of allies) if (s.alive && !autopilot) drawOrderMarker(s);
 
   for (const b of bullets) {
+    if (b.torp) {
+      const a = Math.atan2(b.vy, b.vx);
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(a);
+      ctx.fillStyle = 'rgba(255,120,80,0.4)';
+      ctx.fillRect(-30, -3, 24, 6);
+      ctx.fillStyle = '#e8d8b0';
+      ctx.fillRect(-8, -4.5, 16, 9);
+      ctx.fillStyle = '#ff5a3a';
+      ctx.fillRect(6, -3, 5, 6);
+      ctx.restore();
+      continue;
+    }
     if (b.rocket) {
       const a = Math.atan2(b.vy, b.vx);
       ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(a);
