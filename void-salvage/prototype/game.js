@@ -15,7 +15,7 @@ const TAU = Math.PI * 2;
 const CS = 26;              // world cell size
 const GRID = 9;             // editor grid GRID x GRID
 const BUDGET = 16;          // scrap points for the editor
-const MAX_WING = 2;         // max escort ships you can bring
+const MAX_WING = 2;         // base escort slots — station buildings add more
 const TYPES = {
   hull:   { cost: 1, hp: 45, color: '#4a6a9a', edge: '#6e92c8', name: 'HULL' },
   armor:  { cost: 2, hp: 70, color: '#4a4e55', edge: '#9aa2ad', name: 'ARMOR' },
@@ -128,6 +128,7 @@ let baseShip = null, defWave = 0, baseLost = false, raidWarn = false;
 let hauler = null, haulerLost = false, towGot = 0;
 // build capacity is the limiter — the workbench field itself is unbounded
 const depotBonus = () => ((profile && profile.base) || []).reduce((n, b) => n + (b && b.t === 'depot' ? b.lvl * 3 : 0), 0);
+const wingCap = () => MAX_WING + ((profile && profile.base) || []).reduce((n, b) => n + (b && b.t === 'station' ? b.lvl : 0), 0);
 const budget = () => 10 + ((profile && profile.lvl) || 1) * 6 + depotBonus() + Math.floor(salvage);
 // campaign: visible contracts finished — pirates remember your name
 const CAMPAIGN_KEYS = ['station', 'belt', 'hunt', 'convoy', 'tow'];
@@ -139,6 +140,7 @@ const BUILDINGS = {
   smelter: { name: 'SMELTER', desc: 'scrap/min',  rate: 8, res: 'scrap', accent: '#ffcf6e', cost: l => 40 * (l + 1) },
   depot:   { name: 'DEPOT',   desc: '+3 budget',  rate: 0,              accent: '#9dff8a', cost: l => 35 * (l + 1) },
   turret:  { name: 'TURRET',  desc: 'defense',    rate: 0,              accent: '#ff8a7a', cost: l => 45 * (l + 1) },
+  station: { name: 'STATION', desc: '+1 escort',  rate: 0,              accent: '#c8a2ff', cost: l => 70 * (l + 1) },
 };
 let baseSlot = -1;
 // offline production: buildings work while you're away (8h cap)
@@ -314,7 +316,7 @@ function editorClick(mx, my) {
     const r = rosterRects[i];
     if (r && inRect(r, mx, my)) {
       if (rosterSel.has(i)) rosterSel.delete(i);
-      else if (rosterSel.size < MAX_WING) rosterSel.add(i);
+      else if (rosterSel.size < wingCap()) rosterSel.add(i);
       return;
     }
   }
@@ -515,6 +517,7 @@ function launch() {
       } else if (b.t === 'mine') gl.push([gx, gy, 'armor'], [gx + 1, gy, 'armor'], [gx, gy + 1, 'armor'], [gx + 1, gy + 1, 'hull']);
       else if (b.t === 'smelter') gl.push([gx, gy, 'hull'], [gx + 1, gy, 'hull'], [gx, gy + 1, 'armor'], [gx + 1, gy + 1, 'hull']);
       else if (b.t === 'depot') gl.push([gx, gy, 'cargo'], [gx + 1, gy, 'hull'], [gx, gy + 1, 'hull'], [gx + 1, gy + 1, 'battery']);
+      else if (b.t === 'station') gl.push([gx, gy, 'shield'], [gx + 1, gy, 'pd'], [gx, gy + 1, 'battery'], [gx + 1, gy + 1, 'hull']);
     });
     if (!gl.length) gl.push([0, 0, 'hull'], [1, 0, 'hull'], [0, 1, 'hull'], [1, 1, 'armor']); // bare pad
     baseShip = makeShip(gridFromList(gl), 1500, 0, 'ally', '#8aa0c8');
@@ -1732,10 +1735,10 @@ function drawBase() {
     if (!b) {
       ctx.fillStyle = '#8aa0c8'; ctx.font = 'bold 13px monospace';
       ctx.fillText('CONSTRUCT', gx, py - 4);
-      let bx = gx;
+      let bx = gx, bi = 0;
       for (const k of Object.keys(BUILDINGS)) {
         const spec = BUILDINGS[k], cost = spec.cost(0), afford = (profile.scrap || 0) >= cost;
-        const r = { x: bx, y: py + 6, w: cw, h: 58 };
+        const r = { x: bx, y: py + 6 + Math.floor(bi / 4) * 66, w: cw, h: 58 };
         baseRects.push({ r, fn: () => {
           if ((profile.scrap || 0) < cost) return;
           profile.scrap -= cost;
@@ -1751,6 +1754,7 @@ function drawBase() {
         ctx.fillStyle = afford ? '#ffcf6e' : '#4a4a3a';
         ctx.fillText(`${cost} scrap`, r.x + 8, r.y + 48);
         bx += cw + gap;
+        if (++bi % 4 === 0) bx = gx;
       }
     } else {
       const spec = BUILDINGS[b.t], cost = spec.cost(b.lvl), afford = (profile.scrap || 0) >= cost;
@@ -1834,7 +1838,7 @@ function drawEditor() {
   // wingmen roster — two columns
   const ry0 = gs.y + Math.ceil(KEYS_ORDER.length / 2) * 44 + 22;
   ctx.fillStyle = '#7fd4ff'; ctx.font = 'bold 15px monospace';
-  ctx.fillText(`FLEET  (${rosterSel.size}/${MAX_WING})`, px, ry0 - 10);
+  ctx.fillText(`FLEET  (${rosterSel.size}/${wingCap()})`, px, ry0 - 10);
   ROSTER.forEach((r, i) => {
     const col = i % 2, row = Math.floor(i / 2);
     const rc = { x: px + col * 175, y: ry0 + row * 60, w: 165, h: 52 };
