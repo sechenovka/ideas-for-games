@@ -105,3 +105,36 @@ D1 > 35%, D7 > 15%, ad opt-in > 40% DAU, campaign chapter completion curve, Prem
 ## Tech Notes
 
 Shares ~60% of tech with SCRAP WARS (parts system, physics, workshop/shipyard, raids). Prototype: HTML5 Canvas + hand-rolled physics (`prototype/`). Production engine TBD — Godot 4 is the candidate (free, exports to mobile).
+
+## Design Addendum (from the space-RTS design doc + review)
+
+Merged direction from the player's RTS design document and a systems review. Numbers in the doc are starting points — verify in play.
+
+### Damage & structure
+
+- **Structural integrity (implemented in prototype):** a ship is only alive while its blocks are welded into one piece. Cutting the middle severs sections — they drift off as independent wrecks, guns still hot, free salvage for the survivor. Enables "cut it in half" targeting.
+- **Material-based pixel damage (from doc):** each material has a pixel-break threshold and melting point — aluminum is light and soft, tungsten is heavy and nearly unbreakable but slow to cut. Lasers melt instead of chipping: heat builds per-block, spreads to neighbors, radiators and cooling are real design constraints.
+- **Firing arcs:** turrets only fire across their mounted arc — external placement matters; creates broadside/spinal design decisions.
+- **Chain reactions:** ammo storage, fuel tanks and reactors detonate on breach — placement is risk/reward.
+
+### Fleet roles (doc + additions)
+
+Doc: combat, miner, cargo, collector, transport, boarding, carrier, repair, orbital station.
+Additions: **minelayer/minesweeper**, **tug** (tows disabled hulls home), **mobile refinery** (processes field wreckage on-site — the "collector ship" loop), **shield projector** (bubble over allies, reactor-hungry), **EW ship** (radar/comms jamming), **scout** (long-range radar, reveals enemy composition pre-raid).
+
+### Missions & raids
+
+- **Contract board** instead of a scripted campaign early on: escort, pirate outpost, beacon recovery, resource quotas — tutorializes mechanics and provides fast progression.
+- **Pirate raids on your base** — offline events that force real defense investment.
+- **Non-clan raids:** CoC-style matchmaking by Fleet HQ level + defense rating; post-raid shield timer; revenge button; defense fights as a "ghost fleet" AI replay (same trick as SCRAP WARS).
+- **Loss softeners** (a year-built ship dying permanently is a retention risk): ejection pods save veteran crews, one-click rebuild from saved blueprints, timed wreck-recovery missions to salvage your own destroyed ship.
+
+### Boarding (doc detail)
+
+Boarding pods (fast, interceptable by AA) vs airlock docking. Room-to-room fighting; the defender can **vent a compartment** to space to kill boarders at the cost of own crew. Captured ships may be booby-trapped — boarding is a risk check.
+
+### Economy
+
+- Caravans/trade between players and NPCs — escort for a cut or raid for loot.
+- Weekly comet/anomaly events on the system map — rare resources, contested.
+- Supply-chain warfare: ammo/fuel containers can be intercepted — starving a fleet beats burning it.

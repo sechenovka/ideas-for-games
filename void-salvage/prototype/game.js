@@ -255,6 +255,12 @@ function canLaunch() {
   if (!n('hull')) return { ok: false, why: 'need HULL' };
   if (!n('engine')) return { ok: false, why: 'need ENGINE' };
   if (!n('turret') && !n('rocket')) return { ok: false, why: 'need a WEAPON' };
+  // hull must be one welded piece — no floating sections
+  const seen = new Set([design[0]]), q = [design[0]];
+  for (let i = 0; i < q.length; i++)
+    for (const p of design)
+      if (!seen.has(p) && Math.hypot(p.dx - q[i].dx, p.dy - q[i].dy) <= CS * 1.5) { seen.add(p); q.push(p); }
+  if (seen.size < design.length) return { ok: false, why: 'HULL DISCONNECTED' };
   return { ok: true };
 }
 
@@ -613,8 +619,59 @@ function checkBlockDead(s, blk) {
   const dcol = DEBRIS_COL[blk.variant || blk.type] || '#888';
   const outA = Math.atan2(bpos.y - s.y, bpos.x - s.x);
   for (let k = 0; k < 3; k++) spawnChunk(bpos.x + rand(-8, 8), bpos.y + rand(-8, 8), dcol, 2 + Math.floor(rand(0, 3)), outA + rand(-0.4, 0.4), s);
+  splitCheck(s);
   recount(s);
   if (!s.blocks.length) { s.alive = false; selection.delete(s); explode(s.x, s.y, s.color, 50); }
+}
+
+const pendingWrecks = [];
+
+// structural integrity: blocks only exist while welded to the hull. Cut the
+// middle out and the severed piece drifts off as its own wreck — guns still
+// hot, no orders, free salvage for whoever survives
+function splitCheck(s) {
+  if (s.blocks.length < 2) return;
+  const seen = new Set(), comps = [];
+  for (const seed of s.blocks) {
+    if (seen.has(seed)) continue;
+    const comp = [seed]; seen.add(seed);
+    for (let i = 0; i < comp.length; i++) {
+      const b = comp[i];
+      for (const o of s.blocks) {
+        if (!seen.has(o) && Math.hypot(o.dx - b.dx, o.dy - b.dy) <= CS * 1.5) { seen.add(o); comp.push(o); }
+      }
+    }
+    comps.push(comp);
+  }
+  if (comps.length < 2) return;
+  comps.sort((a, b) => b.length - a.length);
+  let keep = comps[0];
+  for (const c of comps) if (c.includes(s.blocks[0])) { keep = c; break; }
+  for (const comp of comps) {
+    if (comp === keep) continue;
+    let cx = 0, cy = 0;
+    for (const b of comp) { cx += b.dx; cy += b.dy; }
+    cx /= comp.length; cy /= comp.length;
+    const c = Math.cos(s.angle), sn = Math.sin(s.angle);
+    const w = {
+      x: s.x + cx * c - cy * sn, y: s.y + cx * sn + cy * c,
+      vx: s.vx, vy: s.vy, angle: s.angle, va: s.va,
+      blocks: comp.map(b => ({ ...b, dx: b.dx - cx, dy: b.dy - cy })),
+      team: s.team, color: s.color,
+      thrust: 0, turn: 0, radius: 0, alive: true,
+      order: null, thrusting: false, orb: s.orb, wreck: true
+    };
+    recount(w);
+    w.radius = Math.max(...w.blocks.map(b => Math.hypot(b.dx, b.dy))) + CS * 0.7;
+    const ka = Math.atan2(w.y - s.y, w.x - s.x);
+    w.vx += Math.cos(ka) * 60; w.vy += Math.sin(ka) * 60; // visibly tear away
+    w.va += rand(-1.5, 1.5);
+    pendingWrecks.push(w);
+    explode(w.x, w.y, s.color, 12);
+  }
+  s.blocks = s.blocks.filter(b => keep.includes(b));
+  s.radius = Math.max(...s.blocks.map(b => Math.hypot(b.dx, b.dy))) + CS * 0.7;
+  if (s.team === 'ally') msg = { text: 'HULL SEVERED — SECTION ADRIFT', t: 2.5 };
 }
 
 function update(dt) {
@@ -818,6 +875,12 @@ function update(dt) {
   }
 
   if (msg) { msg.t -= dt; if (msg.t <= 0) msg = null; }
+
+  // severed sections join the battle as drifting wrecks
+  if (pendingWrecks.length) {
+    for (const w of pendingWrecks) (w.team === 'ally' ? allies : foes).push(w);
+    pendingWrecks.length = 0;
+  }
 
   if (!allies.some(s => s.alive)) dead = true;
   else if (!allies[0].alive) dead = true; // flagship lost = mission failed
